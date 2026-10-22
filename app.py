@@ -183,7 +183,6 @@ if "action" in query_params:
             conn.commit()
 
     elif action == "save_all_data":
-        # Streamlit native handling of save payload from query string
         spk = query_params.get("spk", "")
         payload_b64 = query_params.get("payload", "")
         if spk and payload_b64:
@@ -204,7 +203,6 @@ if "action" in query_params:
                 )
                 conn.commit()
                 
-                # Push master state to Dropbox
                 dbx_client = get_dropbox_client()
                 if dbx_client:
                     cursor.execute("SELECT store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename FROM store_data")
@@ -288,7 +286,7 @@ if not st.session_state.logged_in:
                     st.error("Invalid username or password.")
     st.stop()
 
-# --- FETCH USERS & STORE DATA FOR JAVASCRIPT INJECTION ---
+# --- FETCH USERS, FILES & STORE DATA FOR JAVASCRIPT INJECTION ---
 conn = sqlite3.connect(DB_FILE)
 cursor = conn.cursor()
 cursor.execute("SELECT username, name, role, password FROM users")
@@ -297,6 +295,21 @@ db_users = cursor.fetchall()
 users_dict = {}
 for u, n, r, p in db_users:
     users_dict[u] = {"name": n, "role": r, "pass": p}
+
+# Fetch files
+cursor.execute("SELECT id, store_period_key, category, filename FROM store_files")
+db_files = cursor.fetchall()
+
+files_json = "{}"
+if db_files:
+    fj = {}
+    for fid, spk, cat, fname in db_files:
+        if spk not in fj:
+            fj[spk] = {}
+        if cat not in fj[spk]:
+            fj[spk][cat] = []
+        fj[spk][cat].append({"id": fid, "filename": fname})
+    files_json = json.dumps(fj)
 
 # Fetch store data (checklist & inventory)
 cursor.execute(
@@ -1174,8 +1187,6 @@ html_code = """
             };
 
             const base64Payload = btoa(unescape(encodeURIComponent(JSON.stringify(fullPayload))));
-            
-            // Route save securely through Streamlit query parameter reload
             window.location.href = `?action=save_all_data&spk=${encodeURIComponent(spk)}&payload=${encodeURIComponent(base64Payload)}`;
         }
 
@@ -1214,37 +1225,19 @@ html_code = """
 
         function handleItemFiles(cat, inputElem) {
             if (inputElem.files && inputElem.files.length > 0) {
-                const spk = getSPK();
-                if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
-                if (!storedFilesMap[spk][cat]) storedFilesMap[spk][cat] = [];
-
-                Array.from(inputElem.files).forEach((file, idx) => {
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        renderStoredFiles();
-                        scheduleAutoSave();
-                    };
-                    reader.readAsArrayBuffer(file);
-                });
+                renderStoredFiles();
+                scheduleAutoSave();
                 inputElem.value = '';
             }
         }
 
         function handleRemoveFile(cat, fileId) {
-            const spk = getSPK();
-            if (storedFilesMap[spk] && storedFilesMap[spk][cat]) {
-                storedFilesMap[spk][cat] = storedFilesMap[spk][cat].filter(f => f.id !== fileId);
-                renderStoredFiles();
-                scheduleAutoSave();
-            }
+            renderStoredFiles();
+            scheduleAutoSave();
         }
 
         function clearUploadField(cat) {
             if (confirm(`Clear all files for this category?`)) {
-                const spk = getSPK();
-                if (storedFilesMap[spk]) {
-                    storedFilesMap[spk][cat] = [];
-                }
                 renderStoredFiles();
                 scheduleAutoSave();
             }
@@ -1264,7 +1257,6 @@ html_code = """
                 if (fileList.length > 0) {
                     let html = fileList.map(f => {
                         let chip = `<span class="inline-block bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
-                        chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-600 font-bold ml-1 hover:text-red-800">×</button>`;
                         chip += `</span>`;
                         return chip;
                     }).join('');
@@ -1272,7 +1264,6 @@ html_code = """
                     if (tableBox) {
                         tableBox.innerHTML = fileList.map(f => {
                             let chip = `<span class="inline-block bg-emerald-800 text-emerald-200 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
-                            chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-400 font-bold ml-1 hover:text-red-300">×</button>`;
                             chip += `</span>`;
                             return chip;
                         }).join('');
