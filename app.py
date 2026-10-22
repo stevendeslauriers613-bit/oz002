@@ -405,8 +405,8 @@ html_code = """
                         <option value="June">June</option>
                         <option value="July">July</option>
                         <option value="August">August</option>
-                        <option value="September">September</option>
-                        <option value="October" selected>October</option>
+                        <option value="September" selected>September</option>
+                        <option value="October">October</option>
                         <option value="November">November</option>
                         <option value="December">December</option>
                     </select>
@@ -501,7 +501,7 @@ html_code = """
                     <button type="button" onclick="saveAllData()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-1.5 rounded-full font-semibold shadow-xs border border-emerald-600 transition cursor-pointer">
                         💾 Save All
                     </button>
-                    <span id="active-period-label" class="bg-white text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full font-semibold shadow-xs">October 2026</span>
+                    <span id="active-period-label" class="bg-white text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full font-semibold shadow-xs">September 2026</span>
                     <span id="store-completion-badge" class="bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1 rounded-full font-semibold shadow-xs">Checklist: 0/10 Completed</span>
                 </div>
             </div>
@@ -755,7 +755,7 @@ html_code = """
                 <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-3 border-b border-emerald-800 gap-3">
                     <div>
                         <h3 class="text-lg font-bold text-emerald-300">Accountant Review Portal & Monthly Record Viewer</h3>
-                        <p class="text-emerald-200/80 text-xs mt-0.5">Accountant view for <span id="portal-store-label" class="text-white font-semibold">Oz 1</span> – <span id="portal-period-label" class="text-white font-semibold">October 2026</span></p>
+                        <p class="text-emerald-200/80 text-xs mt-0.5">Accountant view for <span id="portal-store-label" class="text-white font-semibold">Oz 1</span> – <span id="portal-period-label" class="text-white font-semibold">September 2026</span></p>
                     </div>
                     <div class="flex items-center gap-2">
                         <button onclick="downloadMasterZip()" class="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl border border-emerald-500 transition">
@@ -901,7 +901,7 @@ html_code = """
 
         let stores = (isStoreManager || currentUserRole === 'store') ? [currentUserName] : ["Oz 1", "Oz 2", "Oz 3", "Oz 4", "Oz 5", "Oz 6", "Oz 7"];
         let activeStore = stores[0];
-        let selectedMonth = "October";
+        let selectedMonth = "September";
         let selectedYear = "2026";
 
         let storedFilesMap = REPLACE_FILES_JSON;
@@ -909,6 +909,8 @@ html_code = """
         let storeInventoryData = {};
 
         function initApp() {
+            document.getElementById('select-month').value = selectedMonth;
+            document.getElementById('select-year').value = selectedYear;
             renderTabs();
             loadStorePeriodData();
             setupCSVParser();
