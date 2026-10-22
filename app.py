@@ -220,7 +220,7 @@ def save_store_record(spk, data_dict):
 current_record = load_store_record(store_period_key)
 
 # --- INVENTORY CSV FORMATTER ---
-st.markdown(f"### Workspace: **{selected_store}** ({selected_month} {selectedYear})")
+st.markdown(f"### Workspace: **{selected_store}** ({selected_month} {selected_year})")
 
 col_left, col_right = st.columns([1.2, 1.8])
 
@@ -326,4 +326,4 @@ if st.button("💾 Save All (Sync to Dropbox Cloud)", type="primary", use_contai
     }
 
     save_store_record(store_period_key, current_record)
-    st.success(f"Successfully saved and synced **{selected_store} ({selected_month} {selectedYear})** to cloud storage & Dropbox!")
+    st.success(f"Successfully saved and synced **{selected_store} ({selected_month} {selected_year})** to cloud storage & Dropbox!")
