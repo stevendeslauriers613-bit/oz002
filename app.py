@@ -15,6 +15,12 @@ import streamlit.components.v1 as components
 # Suppress deprecation warning for components.html
 logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(logging.ERROR)
 
+# --- SPECIFIC DEFAULT PERIOD CONFIGURATION ---
+DEFAULT_STORE = "Oz 1"
+DEFAULT_MONTH = "September"
+DEFAULT_YEAR = "2026"
+DEFAULT_PERIOD_KEY = f"{DEFAULT_STORE}_{DEFAULT_MONTH}_{DEFAULT_YEAR}"
+
 # --- DROPBOX SETUP ---
 DROPBOX_CREDENTIALS_FILE = "dropbox_credentials.json"
 DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
@@ -44,13 +50,9 @@ def ensure_dropbox_folder(dbx):
 
 
 def upload_to_dropbox(dbx, filename, file_data):
-    try:
-        dropbox_path = f"{DROPBOX_FOLDER_PATH}/{filename}"
-        dbx.files_upload(file_data, dropbox_path, mode=dropbox.files.WriteMode.overwrite)
-        return f"dropbox://{dropbox_path}"
-    except Exception as e:
-        print(f"Dropbox upload error: {e}")
-        return None
+    dropbox_path = f"{DROPBOX_FOLDER_PATH}/{filename}"
+    dbx.files_upload(file_data, dropbox_path, mode=dropbox.files.WriteMode.overwrite)
+    return f"dropbox://{dropbox_path}"
 
 
 def download_from_dropbox_as_json(dbx, filename):
@@ -87,7 +89,7 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# --- DATABASE SETUP ---
+# --- DATABASE & CLOUD STATE SYNC SETUP ---
 DB_FILE = "oz_store.db"
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
@@ -182,43 +184,27 @@ if "action" in query_params:
             cursor.execute("DELETE FROM users WHERE username = ?", (username,))
             conn.commit()
 
-    elif action == "save_all_data":
-        spk = query_params.get("spk", "")
-        payload_b64 = query_params.get("payload", "")
-        if spk and payload_b64:
-            try:
-                decoded_json = base64.b64decode(payload_b64).decode("utf-8")
-                data = json.loads(decoded_json)
-                cursor.execute(
-                    "INSERT OR REPLACE INTO store_data (store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        spk,
-                        data.get("cooh_text", ""),
-                        data.get("cooh_date", ""),
-                        data.get("chargebacks_text", ""),
-                        json.dumps(data.get("checklist_json", {})),
-                        json.dumps(data.get("inventory_data")) if data.get("inventory_data") else None,
-                        data.get("inventory_filename", "")
-                    )
-                )
-                conn.commit()
-                
-                dbx_client = get_dropbox_client()
-                if dbx_client:
-                    cursor.execute("SELECT store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename FROM store_data")
-                    sdj_all = {}
-                    for row_spk, cooh_t, cooh_d, cb_t, chk_j, inv_j, inv_fname in cursor.fetchall():
-                        sdj_all[row_spk] = {
-                            "cooh_text": cooh_t or "",
-                            "cooh_date": cooh_d or "",
-                            "chargebacks_text": cb_t or "Nothing to report.",
-                            "checklist_json": json.loads(chk_j) if chk_j else {},
-                            "inventory_data": json.loads(inv_j) if inv_j else None,
-                            "inventory_filename": inv_fname or ""
-                        }
-                    upload_json_to_dropbox(dbx_client, "master_store_state.json", sdj_all)
-            except Exception as e:
-                print(f"Save action error: {e}")
+    elif action == "delete_file":
+        file_id = query_params.get("file_id")
+        if file_id:
+            cursor.execute("SELECT filepath FROM store_files WHERE id = ?", (file_id,))
+            f_row = cursor.fetchone()
+            if f_row:
+                filepath = f_row[0]
+                if filepath.startswith("dropbox://"):
+                    dbx_client = get_dropbox_client()
+                    if dbx_client:
+                        try:
+                            dbx_client.files_delete_v2(filepath.replace("dropbox://", ""))
+                        except Exception:
+                            pass
+                elif os.path.exists(filepath):
+                    try:
+                        os.remove(filepath)
+                    except Exception:
+                        pass
+            cursor.execute("DELETE FROM store_files WHERE id = ?", (file_id,))
+            conn.commit()
 
     elif action == "sign_out":
         st.session_state.logged_in = False
@@ -228,6 +214,37 @@ if "action" in query_params:
         conn.close()
         st.query_params.clear()
         st.rerun()
+
+    elif action == "download_file":
+        file_id = query_params.get("file_id")
+        if file_id:
+            cursor.execute("SELECT filename, filepath FROM store_files WHERE id = ?", (file_id,))
+            f_row = cursor.fetchone()
+            if f_row:
+                import mimetypes
+
+                filename = f_row[0]
+                filepath = f_row[1]
+                mime_type, _ = mimetypes.guess_type(filename)
+                if mime_type is None:
+                    mime_type = "application/octet-stream"
+
+                if filepath.startswith("dropbox://"):
+                    dbx_client = get_dropbox_client()
+                    if dbx_client:
+                        try:
+                            _, res = dbx_client.files_download(filepath.replace("dropbox://", ""))
+                            st.download_button(label=f"Download {filename}", data=res.content, file_name=filename,
+                                               mime=mime_type, key=f"dl_{file_id}")
+                            st.stop()
+                        except Exception:
+                            pass
+                elif os.path.exists(filepath):
+                    with open(filepath, "rb") as f:
+                        file_bytes = f.read()
+                    st.download_button(label=f"Download {filename}", data=file_bytes, file_name=filename,
+                                       mime=mime_type, key=f"dl_{file_id}")
+                    st.stop()
 
     conn.close()
     st.query_params.clear()
@@ -263,7 +280,7 @@ if not st.session_state.logged_in:
             <div style="background-color: #065f46; padding: 30px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
                 <div style="font-size: 40px; margin-bottom: 10px;">🌿</div>
                 <h2 style="margin: 0; font-size: 22px;">The OZ Store Portal</h2>
-                <p style="font-size: 12px; color: #a7f3d0; margin-top: 5px;">Secure Persistent Database Manager</p>
+                <p style="font-size: 12px; color: #a7f3d0; margin-top: 5px;">Secure Persistent Database & Cloud Manager</p>
             </div>
         """,
             unsafe_allow_html=True,
@@ -331,6 +348,10 @@ if db_store_data:
 
 conn.close()
 
+# Also push master state to Dropbox if any changes occurred
+if dbx and sdj:
+    upload_json_to_dropbox(dbx, "master_store_state.json", sdj)
+
 current_role = st.session_state.role
 current_name = st.session_state.name
 is_store_manager = "true" if current_role == "store" else "false"
@@ -364,14 +385,14 @@ add_user_btn_html = (
     else ""
 )
 
-# --- FULL TAILWIND UI WITH STREAMLIT-ROUTED PERSISTENCE ---
+# --- FULL HTML UI WITH CLOUD-SYNCED PERSISTENCE ---
 html_code = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The OZ Store - Executive Financial Report & Package Manager</title>
+    <title>The OZ Store - Executive Financial Report & Cloud Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -389,7 +410,7 @@ html_code = """
                 </div>
                 <div>
                     <h1 class="text-xl md:text-2xl font-extrabold text-white tracking-tight">The OZ Store</h1>
-                    <p class="text-emerald-100/80 text-xs mt-0.5">Executive Financial & Accountant Document Package Manager</p>
+                    <p class="text-emerald-100/80 text-xs mt-0.5">Executive Financial & Dropbox-Synced Cloud Manager</p>
                 </div>
             </div>
 
@@ -494,12 +515,12 @@ html_code = """
 
             <div class="flex justify-between items-center mb-6 bg-emerald-50/60 p-4 rounded-xl border border-emerald-200 shadow-xs">
                 <div>
-                    <span class="text-xs uppercase tracking-wider text-emerald-800 font-bold block mb-0.5">Active Workspace</span>
+                    <span class="text-xs uppercase tracking-wider text-emerald-800 font-bold block mb-0.5">Active Workspace (Cloud-Synced)</span>
                     <h2 class="text-xl font-extrabold text-zinc-900" id="workspace-store-name">Oz 1</h2>
                 </div>
                 <div class="flex items-center gap-3 text-xs text-zinc-600">
                     <button type="button" onclick="saveAllData()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-1.5 rounded-full font-semibold shadow-xs border border-emerald-600 transition cursor-pointer">
-                        💾 Save All
+                        💾 Save All (Sync to Cloud)
                     </button>
                     <span id="active-period-label" class="bg-white text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full font-semibold shadow-xs">September 2026</span>
                     <span id="store-completion-badge" class="bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1 rounded-full font-semibold shadow-xs">Checklist: 0/10 Completed</span>
@@ -909,13 +930,14 @@ html_code = """
         let storeInventoryData = {};
 
         function initApp() {
-            document.getElementById('select-month').value = selectedMonth;
-            document.getElementById('select-year').value = selectedYear;
             renderTabs();
             loadStorePeriodData();
             setupCSVParser();
             document.getElementById('workspace-store-name').textContent = activeStore;
             document.getElementById('portal-store-label').textContent = activeStore;
+            
+            // Force immediate recalculation on load
+            setTimeout(updateFinancialSummary, 150);
         }
 
         function renderTabs() {
@@ -1086,6 +1108,87 @@ html_code = """
             renderInventoryTable();
             showCSVFileInfo(fileName);
             updateFinancialSummary();
+
+            const formattedFileName = `${activeStore}_${selectedMonth}_${selectedYear}_Formatted_Inventory.csv`;
+            const csvContent = Papa.unparse(sortedRows);
+            const base64Data = btoa(unescape(encodeURIComponent(csvContent)));
+
+            fetch('http://127.0.0.1:8513/api/upload_file', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    store_period_key: spk,
+                    category: 'green1',
+                    filename: formattedFileName,
+                    file_data: base64Data
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
+                    storedFilesMap[spk]['green1'] = (storedFilesMap[spk]['green1'] || []).filter(f => !f.filename.includes('_Formatted_Inventory.csv'));
+                    storedFilesMap[spk]['green1'].push({ id: data.id, filename: formattedFileName });
+
+                    const green1Chk = document.getElementById('green1-chk');
+                    if (green1Chk && !green1Chk.checked) green1Chk.checked = true;
+
+                    renderStoredFiles();
+                    updateCompletionBadge();
+                    scheduleAutoSave();
+                }
+            })
+            .catch(err => console.error('Auto-upload error:', err));
+        }
+
+        function renderInventoryTable() {
+            const spk = getSPK();
+            const inv = storeInventoryData[spk];
+            const tableHeader = document.getElementById('table-header');
+            const tableBody = document.getElementById('table-body');
+            const invStatusBadge = document.getElementById('inv-status-badge');
+            const actionArea = document.getElementById('action-area');
+            const portalInvVal = document.getElementById('portal-inv-val');
+            const infoBox = document.getElementById('csv-file-info');
+
+            if (!inv) {
+                tableHeader.innerHTML = `<th class="p-2 font-semibold">Category</th><th class="p-2 font-semibold">Opening</th><th class="p-2 font-semibold">Sold</th><th class="p-2 font-semibold">Closing</th>`;
+                tableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-zinc-400">No report uploaded yet.</td></tr>`;
+                actionArea.classList.add('hidden');
+                invStatusBadge.textContent = "Not Loaded";
+                invStatusBadge.className = "text-[11px] text-zinc-600 bg-white border border-zinc-300 px-2 py-0.5 rounded shadow-xs";
+                portalInvVal.innerHTML = '<span class="text-emerald-200/60">No CSV report uploaded</span>';
+                if(infoBox) infoBox.classList.add('hidden');
+                updateFinancialSummary();
+                return;
+            }
+
+            const headers = inv.headers;
+            const rows = inv.rows;
+            const displayHeaders = headers.includes('Opening') ? ['Category', 'Opening', 'Sold', 'Closing'] : [headers[0], headers[1], headers[2]];
+
+            tableHeader.innerHTML = displayHeaders.map(h => `<th class="p-2 font-semibold">${h}</th>`).join('');
+            tableBody.innerHTML = rows.map(row => `
+                <tr class="hover:bg-zinc-50 transition-colors">
+                    ${displayHeaders.map(h => `<td class="p-2 ${h === 'Category' ? 'font-medium text-emerald-800' : 'text-zinc-700'}">${row[h] !== undefined ? row[h] : ''}</td>`).join('')}
+                </tr>
+            `).join('');
+
+            actionArea.classList.remove('hidden');
+            invStatusBadge.textContent = `Loaded (${inv.fileName})`;
+            invStatusBadge.className = "text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded";
+            portalInvVal.innerHTML = `<span class="text-emerald-300 font-semibold">✓ Ready (${inv.fileName})</span>`;
+
+            showCSVFileInfo(inv.fileName);
+
+            document.getElementById('download-excel-btn').onclick = function() {
+                const worksheetData = [headers, ...rows.map(row => headers.map(h => row[h]))];
+                const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, `${activeStore} Inventory`);
+                XLSX.writeFile(workbook, `${activeStore}_${selectedMonth}_${selectedYear}_Formatted_Report.xlsx`);
+            };
+            updateFinancialSummary();
         }
 
         function showCSVFileInfo(fileName) {
@@ -1179,7 +1282,7 @@ html_code = """
             const checklistData = { checkboxes: checkboxes, notes: notes, dates: dates, expenses: expenses };
             const inv = storeInventoryData[spk] || null;
 
-            const fullPayload = {
+            persistentStoreData[spk] = {
                 cooh_text: notes['cooh'],
                 cooh_date: dates['cooh'],
                 chargebacks_text: notes['chargebacks'],
@@ -1188,8 +1291,42 @@ html_code = """
                 inventory_filename: inv ? inv.fileName : ""
             };
 
-            const base64Payload = btoa(unescape(encodeURIComponent(JSON.stringify(fullPayload))));
-            window.location.href = `?action=save_all_data&spk=${encodeURIComponent(spk)}&payload=${encodeURIComponent(base64Payload)}`;
+            try {
+                localStorage.setItem('oz_data_' + spk, JSON.stringify(persistentStoreData[spk]));
+            } catch(e) {}
+
+            fetch('http://127.0.0.1:8513/api/save_checklist', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    store_period_key: spk,
+                    cooh_text: notes['cooh'],
+                    cooh_date: dates['cooh'],
+                    chargebacks_text: notes['chargebacks'],
+                    checklist_json: checklistData
+                })
+            }).catch(err => console.error('Save checklist error:', err));
+
+            if (inv) {
+                fetch('http://127.0.0.1:8513/api/save_inventory', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        store_period_key: spk,
+                        inventory_json: { headers: inv.headers, rows: inv.rows },
+                        inventory_filename: inv.fileName
+                    })
+                }).catch(err => console.error('Save inventory error:', err));
+            }
+
+            const badge = document.getElementById('store-completion-badge');
+            if (badge) {
+                const checked = Object.values(checkboxes).filter(Boolean).length;
+                badge.textContent = isSilent ? `✓ Saved | Checklist: ${checked}/10` : `Saved Successfully! Checklist: ${checked}/10`;
+                setTimeout(() => {
+                    badge.textContent = `Checklist: ${checked}/10 Completed`;
+                }, 2000);
+            }
         }
 
         function updateCompletionBadge() {
@@ -1227,19 +1364,61 @@ html_code = """
 
         function handleItemFiles(cat, inputElem) {
             if (inputElem.files && inputElem.files.length > 0) {
-                renderStoredFiles();
-                scheduleAutoSave();
+                const spk = getSPK();
+                if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
+                if (!storedFilesMap[spk][cat]) storedFilesMap[spk][cat] = [];
+
+                Array.from(inputElem.files).forEach((file, idx) => {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const base64Data = btoa(new Uint8Array(e.target.result).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+                        fetch('http://127.0.0.1:8513/api/upload_file', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                store_period_key: spk,
+                                category: cat,
+                                filename: file.name,
+                                file_data: base64Data
+                            })
+                        })
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.success) {
+                                if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
+                                if (!storedFilesMap[spk][cat]) storedFilesMap[spk][cat] = [];
+                                storedFilesMap[spk][cat].push({ id: data.id, filename: file.name });
+                                renderStoredFiles();
+                                scheduleAutoSave();
+                            }
+                        })
+                        .catch(err => console.error('Upload error:', err));
+                    };
+                    reader.readAsArrayBuffer(file);
+                });
                 inputElem.value = '';
             }
         }
 
         function handleRemoveFile(cat, fileId) {
-            renderStoredFiles();
-            scheduleAutoSave();
+            const spk = getSPK();
+            if (storedFilesMap[spk] && storedFilesMap[spk][cat]) {
+                storedFilesMap[spk][cat] = storedFilesMap[spk][cat].filter(f => f.id !== fileId);
+                if (Number.isInteger(fileId)) {
+                    fetch(`http://127.0.0.1:8513/api/delete_file?id=${fileId}`, { method: 'POST' })
+                        .catch(err => console.error('Delete error:', err));
+                }
+                renderStoredFiles();
+                scheduleAutoSave();
+            }
         }
 
         function clearUploadField(cat) {
             if (confirm(`Clear all files for this category?`)) {
+                const spk = getSPK();
+                if (storedFilesMap[spk]) {
+                    storedFilesMap[spk][cat] = [];
+                }
                 renderStoredFiles();
                 scheduleAutoSave();
             }
@@ -1259,6 +1438,10 @@ html_code = """
                 if (fileList.length > 0) {
                     let html = fileList.map(f => {
                         let chip = `<span class="inline-block bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
+                        chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-600 font-bold ml-1 hover:text-red-800">×</button>`;
+                        if (Number.isInteger(f.id)) {
+                            chip += ` <button type="button" onclick="window.location.href='http://127.0.0.1:8513/api/download_file?id=${f.id}'" class="text-blue-600 font-bold ml-1 hover:text-blue-800" title="Download">⬇</button>`;
+                        }
                         chip += `</span>`;
                         return chip;
                     }).join('');
@@ -1266,6 +1449,10 @@ html_code = """
                     if (tableBox) {
                         tableBox.innerHTML = fileList.map(f => {
                             let chip = `<span class="inline-block bg-emerald-800 text-emerald-200 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
+                            chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-400 font-bold ml-1 hover:text-red-300">×</button>`;
+                            if (Number.isInteger(f.id)) {
+                                chip += ` <button type="button" onclick="window.location.href='http://127.0.0.1:8513/api/download_file?id=${f.id}'" class="text-blue-300 font-bold ml-1 hover:text-blue-200" title="Download">⬇</button>`;
+                            }
                             chip += `</span>`;
                             return chip;
                         }).join('');
