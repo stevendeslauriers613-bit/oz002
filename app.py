@@ -15,6 +15,12 @@ import streamlit.components.v1 as components
 # Suppress deprecation warning for components.html
 logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(logging.ERROR)
 
+# --- SPECIFIC DEFAULT PERIOD CONFIGURATION ---
+DEFAULT_STORE = "Oz 1"
+DEFAULT_MONTH = "September"
+DEFAULT_YEAR = "2026"
+DEFAULT_PERIOD_KEY = f"{DEFAULT_STORE}_{DEFAULT_MONTH}_{DEFAULT_YEAR}"
+
 # --- DROPBOX SETUP ---
 DROPBOX_CREDENTIALS_FILE = "dropbox_credentials.json"
 DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
@@ -49,6 +55,23 @@ def upload_to_dropbox(dbx, filename, file_data):
     return f"dropbox://{dropbox_path}"
 
 
+def download_from_dropbox_as_json(dbx, filename):
+    try:
+        dropbox_path = f"{DROPBOX_FOLDER_PATH}/{filename}"
+        _, res = dbx.files_download(dropbox_path)
+        return json.loads(res.content.decode("utf-8"))
+    except Exception:
+        return None
+
+
+def upload_json_to_dropbox(dbx, filename, data_dict):
+    try:
+        file_bytes = json.dumps(data_dict, indent=2).encode("utf-8")
+        upload_to_dropbox(dbx, filename, file_bytes)
+    except Exception as e:
+        print(f"Dropbox JSON sync error: {e}")
+
+
 # Set page configuration
 st.set_page_config(
     page_title="The OZ Store - Persistent Accountant Package Manager",
@@ -66,7 +89,7 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# --- DATABASE SETUP ---
+# --- DATABASE & CLOUD STATE SYNC SETUP ---
 DB_FILE = "oz_store.db"
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
@@ -108,6 +131,30 @@ def init_db():
 
 init_db()
 
+# Sync from Dropbox cloud state file if available
+dbx = get_dropbox_client()
+if dbx:
+    ensure_dropbox_folder(dbx)
+    cloud_state = download_from_dropbox_as_json(dbx, "master_store_state.json")
+    if cloud_state:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        for spk, data in cloud_state.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO store_data (store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    spk,
+                    data.get("cooh_text", ""),
+                    data.get("cooh_date", ""),
+                    data.get("chargebacks_text", ""),
+                    json.dumps(data.get("checklist_json", {})),
+                    json.dumps(data.get("inventory_data")) if data.get("inventory_data") else None,
+                    data.get("inventory_filename", "")
+                )
+            )
+        conn.commit()
+        conn.close()
+
 # --- HANDLE QUERY PARAMETER ACTIONS ---
 query_params = st.query_params
 
@@ -145,10 +192,10 @@ if "action" in query_params:
             if f_row:
                 filepath = f_row[0]
                 if filepath.startswith("dropbox://"):
-                    dbx = get_dropbox_client()
-                    if dbx:
+                    dbx_client = get_dropbox_client()
+                    if dbx_client:
                         try:
-                            dbx.files_delete_v2(filepath.replace("dropbox://", ""))
+                            dbx_client.files_delete_v2(filepath.replace("dropbox://", ""))
                         except Exception:
                             pass
                 elif os.path.exists(filepath):
@@ -183,10 +230,10 @@ if "action" in query_params:
                     mime_type = "application/octet-stream"
 
                 if filepath.startswith("dropbox://"):
-                    dbx = get_dropbox_client()
-                    if dbx:
+                    dbx_client = get_dropbox_client()
+                    if dbx_client:
                         try:
-                            _, res = dbx.files_download(filepath.replace("dropbox://", ""))
+                            _, res = dbx_client.files_download(filepath.replace("dropbox://", ""))
                             st.download_button(label=f"Download {filename}", data=res.content, file_name=filename,
                                                mime=mime_type, key=f"dl_{file_id}")
                             st.stop()
@@ -233,7 +280,7 @@ if not st.session_state.logged_in:
             <div style="background-color: #065f46; padding: 30px; border-radius: 16px; color: white; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
                 <div style="font-size: 40px; margin-bottom: 10px;">🌿</div>
                 <h2 style="margin: 0; font-size: 22px;">The OZ Store Portal</h2>
-                <p style="font-size: 12px; color: #a7f3d0; margin-top: 5px;">Secure Persistent Database Manager</p>
+                <p style="font-size: 12px; color: #a7f3d0; margin-top: 5px;">Secure Persistent Database & Cloud Manager</p>
             </div>
         """,
             unsafe_allow_html=True,
@@ -286,8 +333,8 @@ cursor.execute(
     "SELECT store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename FROM store_data")
 db_store_data = cursor.fetchall()
 store_data_json = "{}"
+sdj = {}
 if db_store_data:
-    sdj = {}
     for spk, cooh_t, cooh_d, cb_t, chk_j, inv_j, inv_fname in db_store_data:
         sdj[spk] = {
             "cooh_text": cooh_t or "",
@@ -300,6 +347,10 @@ if db_store_data:
     store_data_json = json.dumps(sdj)
 
 conn.close()
+
+# Also push master state to Dropbox if any changes occurred
+if dbx and sdj:
+    upload_json_to_dropbox(dbx, "master_store_state.json", sdj)
 
 current_role = st.session_state.role
 current_name = st.session_state.name
@@ -334,14 +385,14 @@ add_user_btn_html = (
     else ""
 )
 
-# --- FULL HTML UI WITH EMBEDDED PERSISTENCE & AUTO-SUMMING FINANCIAL CALCULATOR ---
+# --- FULL HTML UI WITH CLOUD-SYNCED PERSISTENCE ---
 html_code = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The OZ Store - Executive Financial Report & Package Manager</title>
+    <title>The OZ Store - Executive Financial Report & Cloud Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -359,7 +410,7 @@ html_code = """
                 </div>
                 <div>
                     <h1 class="text-xl md:text-2xl font-extrabold text-white tracking-tight">The OZ Store</h1>
-                    <p class="text-emerald-100/80 text-xs mt-0.5">Executive Financial & Accountant Document Package Manager</p>
+                    <p class="text-emerald-100/80 text-xs mt-0.5">Executive Financial & Dropbox-Synced Cloud Manager</p>
                 </div>
             </div>
 
@@ -375,8 +426,8 @@ html_code = """
                         <option value="June">June</option>
                         <option value="July">July</option>
                         <option value="August">August</option>
-                        <option value="September">September</option>
-                        <option value="October" selected>October</option>
+                        <option value="September" selected>September</option>
+                        <option value="October">October</option>
                         <option value="November">November</option>
                         <option value="December">December</option>
                     </select>
@@ -464,14 +515,14 @@ html_code = """
 
             <div class="flex justify-between items-center mb-6 bg-emerald-50/60 p-4 rounded-xl border border-emerald-200 shadow-xs">
                 <div>
-                    <span class="text-xs uppercase tracking-wider text-emerald-800 font-bold block mb-0.5">Active Workspace</span>
+                    <span class="text-xs uppercase tracking-wider text-emerald-800 font-bold block mb-0.5">Active Workspace (Cloud-Synced)</span>
                     <h2 class="text-xl font-extrabold text-zinc-900" id="workspace-store-name">Oz 1</h2>
                 </div>
                 <div class="flex items-center gap-3 text-xs text-zinc-600">
                     <button type="button" onclick="saveAllData()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-1.5 rounded-full font-semibold shadow-xs border border-emerald-600 transition cursor-pointer">
-                        💾 Save All
+                        💾 Save All (Sync to Cloud)
                     </button>
-                    <span id="active-period-label" class="bg-white text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full font-semibold shadow-xs">October 2026</span>
+                    <span id="active-period-label" class="bg-white text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full font-semibold shadow-xs">September 2026</span>
                     <span id="store-completion-badge" class="bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1 rounded-full font-semibold shadow-xs">Checklist: 0/10 Completed</span>
                 </div>
             </div>
@@ -725,7 +776,7 @@ html_code = """
                 <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 pb-3 border-b border-emerald-800 gap-3">
                     <div>
                         <h3 class="text-lg font-bold text-emerald-300">Accountant Review Portal & Monthly Record Viewer</h3>
-                        <p class="text-emerald-200/80 text-xs mt-0.5">Accountant view for <span id="portal-store-label" class="text-white font-semibold">Oz 1</span> – <span id="portal-period-label" class="text-white font-semibold">October 2026</span></p>
+                        <p class="text-emerald-200/80 text-xs mt-0.5">Accountant view for <span id="portal-store-label" class="text-white font-semibold">Oz 1</span> – <span id="portal-period-label" class="text-white font-semibold">September 2026</span></p>
                     </div>
                     <div class="flex items-center gap-2">
                         <button onclick="downloadMasterZip()" class="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl border border-emerald-500 transition">
@@ -871,7 +922,7 @@ html_code = """
 
         let stores = (isStoreManager || currentUserRole === 'store') ? [currentUserName] : ["Oz 1", "Oz 2", "Oz 3", "Oz 4", "Oz 5", "Oz 6", "Oz 7"];
         let activeStore = stores[0];
-        let selectedMonth = "October";
+        let selectedMonth = "September";
         let selectedYear = "2026";
 
         let storedFilesMap = REPLACE_FILES_JSON;
@@ -884,6 +935,9 @@ html_code = """
             setupCSVParser();
             document.getElementById('workspace-store-name').textContent = activeStore;
             document.getElementById('portal-store-label').textContent = activeStore;
+            
+            // Force immediate recalculation on load
+            setTimeout(updateFinancialSummary, 150);
         }
 
         function renderTabs() {
@@ -1502,7 +1556,6 @@ html_code = """
                     });
                 }
 
-                // Fallback for demo/September data if no CSV uploaded for active period
                 if (totalSales === 0) {
                     totalSales = 143109.68;
                 }
