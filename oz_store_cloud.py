@@ -2940,14 +2940,17 @@ HTML_CODE = r"""<!DOCTYPE html>
                 const fileList = (storedFilesMap[spk] && storedFilesMap[spk][cat]) ? storedFilesMap[spk][cat] : [];
 
                 if (fileList.length > 0) {
-                    const chip = (f, cls, xcls) => {
+                    const chip = (f, cls, xcls, withDl) => {
                         const size = fmtSize(f.size);
-                        return `<span class="inline-block ${cls} px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${esc(f.filename)}${size ? ' <span class="opacity-60">(' + size + ')</span>' : ''}` +
+                        const dl = (withDl && f.url)
+                            ? ` <a href="${esc(f.url)}" target="_blank" rel="noopener" title="Download ${esc(f.filename)}" class="inline-block bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-1.5 rounded ml-1 no-underline">⬇</a>`
+                            : (withDl ? ' <span class="opacity-50 ml-1" title="Not available for download (re-upload this file)">⬇</span>' : '');
+                        return `<span class="inline-block ${cls} px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${esc(f.filename)}${size ? ' <span class="opacity-60">(' + size + ')</span>' : ''}` + dl +
                             ` <button type="button" data-cat="${esc(cat)}" data-id="${esc(f.id)}" onclick="handleRemoveFile(this.dataset.cat, this.dataset.id)" class="${xcls} font-bold ml-1">×</button></span>`;
                     };
                     box.innerHTML = fileList.map(f => chip(f, 'bg-emerald-100 text-emerald-800', 'text-red-600 hover:text-red-800')).join('');
                     if (tableBox) {
-                        tableBox.innerHTML = fileList.map(f => chip(f, 'bg-emerald-800 text-emerald-200', 'text-red-400 hover:text-red-300')).join('');
+                        tableBox.innerHTML = fileList.map(f => chip(f, 'bg-emerald-800 text-emerald-200', 'text-red-400 hover:text-red-300', true)).join('');
                     }
                 } else {
                     box.innerHTML = '<span class="text-zinc-400 italic">No files uploaded</span>';
@@ -3431,7 +3434,7 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
-APP_VERSION = "2026-10-24 r8 (page switch fix)"
+APP_VERSION = "2026-10-24 r9 (file downloads)"
 USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
@@ -4403,13 +4406,53 @@ def render_hidden_tools():
 # ----------------------------------------------------------------------------
 # Build the page
 # ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# Download links for single files (Dropbox temporary links, valid 4 hours; cached for 3)
+# ----------------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def _link_cache() -> dict:
+    return {}
+
+
+def file_download_links(files_by_cat: dict) -> dict:
+    """{dropbox path: temporary https link} for every Dropbox-stored file, fetched in parallel."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    cache, now = _link_cache(), time.time()
+    paths = [f.get("path") for lst in (files_by_cat or {}).values() for f in lst
+             if f.get("backend") == "dropbox" and f.get("path")]
+    missing = [p for p in paths if p not in cache or now - cache[p][1] > 3 * 3600]
+    dbx = get_dropbox_client() if missing else None
+
+    def fetch(p):
+        try:
+            return p, dbx.files_get_temporary_link(p).link
+        except Exception:
+            log.exception("Could not make a download link for %s", p)
+            return p, ""
+
+    if dbx and missing:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for p, link in ex.map(fetch, missing):
+                if link:
+                    cache[p] = (link, now)
+    return {p: cache[p][0] for p in paths if p in cache}
+
+
 def build_html_page() -> str:
     rec = get_record(spk)
     files_json = {}
     store_data_json = {}
     if rec:
         cj = rec["checklist_json"]
-        files_json[spk] = {cat: [{"id": f.get("id"), "filename": f.get("filename"), "size": f.get("size", 0)}
+        try:
+            _links = file_download_links(cj.get("files") or {})
+        except Exception:
+            log.exception("Could not make download links")
+            _links = {}
+        files_json[spk] = {cat: [{"id": f.get("id"), "filename": f.get("filename"), "size": f.get("size", 0),
+                                  "url": _links.get(f.get("path"), "")}
                                  for f in lst] for cat, lst in (cj.get("files") or {}).items() if lst}
         store_data_json[spk] = rec
 
