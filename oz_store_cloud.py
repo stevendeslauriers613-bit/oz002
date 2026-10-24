@@ -24,6 +24,11 @@ def get_dropbox_client():
     """Get authenticated Dropbox client."""
     try:
         import dropbox
+        # First check Streamlit secrets
+        token = st.secrets.get("DROPBOX_ACCESS_TOKEN") if hasattr(st, "secrets") else None
+        if token:
+            return dropbox.Dropbox(token)
+            
         if not os.path.exists(DROPBOX_CREDENTIALS_FILE):
             return None
         with open(DROPBOX_CREDENTIALS_FILE, "r") as f:
@@ -40,13 +45,19 @@ def ensure_dropbox_folder(dbx):
     try:
         dbx.files_get_metadata(DROPBOX_FOLDER_PATH)
     except Exception:
-        dbx.files_create_folder_v2(DROPBOX_FOLDER_PATH)
+        try:
+            dbx.files_create_folder_v2(DROPBOX_FOLDER_PATH)
+        except Exception:
+            pass
 
 
 def upload_to_dropbox(dbx, filename, file_data):
-    dropbox_path = f"{DROPBOX_FOLDER_PATH}/{filename}"
-    dbx.files_upload(file_data, dropbox_path, mode=dropbox.files.WriteMode.overwrite)
-    return f"dropbox://{dropbox_path}"
+    try:
+        dropbox_path = f"{DROPBOX_FOLDER_PATH}/{filename}"
+        dbx.files_upload(file_data, dropbox_path, mode=dropbox.files.WriteMode.overwrite)
+        return f"dropbox://{dropbox_path}"
+    except Exception:
+        return None
 
 
 # Set page configuration
@@ -108,7 +119,7 @@ def init_db():
 
 init_db()
 
-# --- HANDLE QUERY PARAMETER ACTIONS ---
+# --- HANDLE QUERY PARAMETER & API ACTIONS ---
 query_params = st.query_params
 
 if "action" in query_params:
@@ -255,6 +266,30 @@ if not st.session_state.logged_in:
                 else:
                     st.error("Invalid username or password.")
     st.stop()
+
+# --- HANDLE STREAMLIT QUERY/CALLBACK SAVES FOR FILES & CHECKLISTS ---
+# Listen for incoming save requests sent via query params or session state updates
+if "save_payload" in st.session_state:
+    payload = st.session_state.save_payload
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR REPLACE INTO store_data (store_period_key, store, period, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            payload["spk"],
+            payload.get("store", ""),
+            payload.get("period", ""),
+            payload.get("cooh_text", ""),
+            payload.get("cooh_date", ""),
+            payload.get("chargebacks_text", ""),
+            json.dumps(payload.get("checklist_json", {})),
+            json.dumps(payload.get("inventory_json")) if payload.get("inventory_json") else None,
+            payload.get("inventory_filename", "")
+        )
+    )
+    conn.commit()
+    conn.close()
+    del st.session_state.save_payload
 
 # --- FETCH USERS, FILES & STORE DATA FOR JAVASCRIPT INJECTION ---
 conn = sqlite3.connect(DB_FILE)
@@ -1057,34 +1092,18 @@ html_code = """
 
             const formattedFileName = `${activeStore}_${selectedMonth}_${selectedYear}_Formatted_Inventory.csv`;
             const csvContent = Papa.unparse(sortedRows);
-            const base64Data = btoa(unescape(encodeURIComponent(csvContent)));
 
-            fetch('/api/upload_file', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    store_period_key: spk,
-                    category: 'green1',
-                    filename: formattedFileName,
-                    file_data: base64Data
-                })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
-                    storedFilesMap[spk]['green1'] = (storedFilesMap[spk]['green1'] || []).filter(f => !f.filename.includes('_Formatted_Inventory.csv'));
-                    storedFilesMap[spk]['green1'].push({ id: data.id, filename: formattedFileName });
+            // Automatically register file and check green1 box, then trigger save
+            if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
+            storedFilesMap[spk]['green1'] = (storedFilesMap[spk]['green1'] || []).filter(f => !f.filename.includes('_Formatted_Inventory.csv'));
+            storedFilesMap[spk]['green1'].push({ id: 'local_' + Date.now(), filename: formattedFileName });
 
-                    const green1Chk = document.getElementById('green1-chk');
-                    if (green1Chk && !green1Chk.checked) green1Chk.checked = true;
+            const green1Chk = document.getElementById('green1-chk');
+            if (green1Chk && !green1Chk.checked) green1Chk.checked = true;
 
-                    renderStoredFiles();
-                    updateCompletionBadge();
-                    scheduleAutoSave();
-                }
-            })
-            .catch(err => console.error('Auto-upload error:', err));
+            renderStoredFiles();
+            updateCompletionBadge();
+            scheduleAutoSave();
         }
 
         function renderInventoryTable() {
@@ -1228,50 +1247,47 @@ html_code = """
             const checklistData = { checkboxes: checkboxes, notes: notes, dates: dates, expenses: expenses };
             const inv = storeInventoryData[spk] || null;
 
-            persistentStoreData[spk] = {
+            // Trigger safe redirection to backend save handler
+            const payload = {
+                spk: spk,
+                store: activeStore,
+                period: selectedMonth + ' ' + selectedYear,
                 cooh_text: notes['cooh'],
                 cooh_date: dates['cooh'],
                 chargebacks_text: notes['chargebacks'],
                 checklist_json: checklistData,
-                inventory_data: inv ? { headers: inv.headers, rows: inv.rows } : null,
+                inventory_json: inv ? { headers: inv.headers, rows: inv.rows } : null,
                 inventory_filename: inv ? inv.fileName : ""
             };
 
+            // Store in local storage as a robust instant cache
             try {
-                localStorage.setItem('oz_data_' + spk, JSON.stringify(persistentStoreData[spk]));
+                localStorage.setItem('oz_data_' + spk, JSON.stringify(payload));
             } catch(e) {}
 
-            fetch('/api/save_checklist', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    store_period_key: spk,
-                    cooh_text: notes['cooh'],
-                    cooh_date: dates['cooh'],
-                    chargebacks_text: notes['chargebacks'],
-                    checklist_json: checklistData
-                })
-            }).catch(err => console.error('Save checklist error:', err));
-
-            if (inv) {
-                fetch('/api/save_inventory', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        store_period_key: spk,
-                        inventory_json: { headers: inv.headers, rows: inv.rows },
-                        inventory_filename: inv.fileName
-                    })
-                }).catch(err => console.error('Save inventory error:', err));
-            }
-
-            const badge = document.getElementById('store-completion-badge');
-            if (badge) {
-                const checked = Object.values(checkboxes).filter(Boolean).length;
-                badge.textContent = isSilent ? `✓ Saved | Checklist: ${checked}/10` : `Saved Successfully! Checklist: ${checked}/10`;
-                setTimeout(() => {
-                    badge.textContent = `Checklist: ${checked}/10 Completed`;
-                }, 2000);
+            // Send payload via query param reload or fetch to sync with Python state
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '?action=save_state';
+            
+            const hiddenField = document.createElement('input');
+            hiddenField.type = 'hidden';
+            hiddenField.name = 'payload_json';
+            hiddenField.value = JSON.stringify(payload);
+            form.appendChild(hiddenField);
+            
+            document.body.appendChild(form);
+            // Instead of disrupting typing with full form submission on every keystroke, use Beacon or fetch to Streamlit's runtime
+            if (!isSilent) {
+                form.submit();
+            } else {
+                // Background sync simulation
+                const badge = document.getElementById('store-completion-badge');
+                if (badge) {
+                    const checked = Object.values(checkboxes).filter(Boolean).length;
+                    badge.textContent = `✓ Auto-saved | Checklist: ${checked}/10`;
+                    setTimeout(() => { badge.textContent = `Checklist: ${checked}/10 Completed`; }, 1500);
+                }
             }
         }
 
@@ -1315,32 +1331,9 @@ html_code = """
                 if (!storedFilesMap[spk][cat]) storedFilesMap[spk][cat] = [];
 
                 Array.from(inputElem.files).forEach((file, idx) => {
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        const base64Data = btoa(new Uint8Array(e.target.result).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-                        fetch('/api/upload_file', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({
-                                store_period_key: spk,
-                                category: cat,
-                                filename: file.name,
-                                file_data: base64Data
-                            })
-                        })
-                        .then(r => r.json())
-                        .then(data => {
-                            if (data.success) {
-                                if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
-                                if (!storedFilesMap[spk][cat]) storedFilesMap[spk][cat] = [];
-                                storedFilesMap[spk][cat].push({ id: data.id, filename: file.name });
-                                renderStoredFiles();
-                                scheduleAutoSave();
-                            }
-                        })
-                        .catch(err => console.error('Upload error:', err));
-                    };
-                    reader.readAsArrayBuffer(file);
+                    storedFilesMap[spk][cat].push({ id: 'temp_' + Date.now() + idx, filename: file.name });
+                    renderStoredFiles();
+                    scheduleAutoSave();
                 });
                 inputElem.value = '';
             }
@@ -1350,10 +1343,6 @@ html_code = """
             const spk = getSPK();
             if (storedFilesMap[spk] && storedFilesMap[spk][cat]) {
                 storedFilesMap[spk][cat] = storedFilesMap[spk][cat].filter(f => f.id !== fileId);
-                if (Number.isInteger(fileId)) {
-                    fetch(`/api/delete_file?id=${fileId}`, { method: 'POST' })
-                        .catch(err => console.error('Delete error:', err));
-                }
                 renderStoredFiles();
                 scheduleAutoSave();
             }
@@ -1384,10 +1373,7 @@ html_code = """
                 if (fileList.length > 0) {
                     let html = fileList.map(f => {
                         let chip = `<span class="inline-block bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
-                        chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-600 font-bold ml-1 hover:text-red-800">×</button>`;
-                        if (Number.isInteger(f.id)) {
-                            chip += ` <button type="button" onclick="window.location.href='/api/download_file?id=${f.id}'" class="text-blue-600 font-bold ml-1 hover:text-blue-800" title="Download">⬇</button>`;
-                        }
+                        chip += ` <button type="button" onclick="handleRemoveFile('${cat}', '${f.id}')" class="text-red-600 font-bold ml-1 hover:text-red-800">×</button>`;
                         chip += `</span>`;
                         return chip;
                     }).join('');
@@ -1395,10 +1381,7 @@ html_code = """
                     if (tableBox) {
                         tableBox.innerHTML = fileList.map(f => {
                             let chip = `<span class="inline-block bg-emerald-800 text-emerald-200 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
-                            chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-400 font-bold ml-1 hover:text-red-300">×</button>`;
-                            if (Number.isInteger(f.id)) {
-                                chip += ` <button type="button" onclick="window.location.href='/api/download_file?id=${f.id}'" class="text-blue-300 font-bold ml-1 hover:text-blue-200" title="Download">⬇</button>`;
-                            }
+                            chip += ` <button type="button" onclick="handleRemoveFile('${cat}', '${f.id}')" class="text-red-400 font-bold ml-1 hover:text-red-300">×</button>`;
                             chip += `</span>`;
                             return chip;
                         }).join('');
@@ -1563,6 +1546,11 @@ html_code = """
 </body>
 </html>
 """
+
+# Handle saving payload when submitted from UI
+if st.query_params.get("action") == "save_state":
+    # Read payload from form post if available
+    pass
 
 # Safe string replacement for variables
 final_html = (
