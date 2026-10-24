@@ -3294,6 +3294,7 @@ HTML_CODE = r"""<!DOCTYPE html>
 <script>
 (function(){
   function tidy(){
+    return;
     try{
       var d = window.parent.document;
       if (!d.getElementById('oz-noscroll-style')){
@@ -3311,7 +3312,20 @@ HTML_CODE = r"""<!DOCTYPE html>
       }
       if (keeper){
         all.forEach(function(e){ if (e === keeper) e.classList.remove('oz-noscroll'); else e.classList.add('oz-noscroll'); });
+        d.documentElement.classList.add('oz-noscroll'); d.body.classList.add('oz-noscroll');
       }
+    }catch(e){}
+  }
+  function dbg(){
+    try{
+      var d = window.parent.document, el = window.frameElement, out = [];
+      while (el && (el = el.parentElement)){
+        var cs = window.parent.getComputedStyle(el);
+        out.push((el.getAttribute('data-testid') || el.tagName.toLowerCase()) + ' [' + cs.overflowY + ' ' + el.scrollHeight + '/' + el.clientHeight + (el.classList.contains('oz-noscroll') ? ' hidden' : '') + ']');
+      }
+      var box = document.getElementById('oz-debug');
+      if (!box){ box = document.createElement('div'); box.id = 'oz-debug'; box.style.cssText = 'font:11px monospace;color:#71717a;padding:8px;word-break:break-all;width:100%'; document.body.appendChild(box); }
+      box.textContent = 'layers: ' + out.join(' < ');
     }catch(e){}
   }
   function fit(){
@@ -3987,8 +4001,27 @@ def user_from_token(token: str):
 # ----------------------------------------------------------------------------
 # Boot
 # ----------------------------------------------------------------------------
+def apply_global_css():
+    st.markdown("<style>.stApp,[data-testid='stAppViewContainer'],[data-testid='stMain'],.main{background:#f4f4f5 !important}"
+                "[data-stale='true'],[data-stale='true'] *{opacity:1 !important;filter:none !important;transition:none !important}"
+                "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
+                "[data-testid='stHeader']{background:transparent !important}"
+                "iframe{background:#f4f4f5}"
+                "html,body,.stApp,[data-testid='stApp'],[data-testid='stAppViewContainer'],[data-testid='stMainBlockContainer'],.block-container"
+                "{overflow:hidden !important}"
+                "html,body,.stApp,[data-testid='stApp'],[data-testid='stAppViewContainer']{height:100vh !important;max-height:100vh !important}"
+                "[data-testid='stMain'],section.main{height:100vh !important;max-height:100vh !important;overflow-y:scroll !important;overflow-x:hidden !important;"
+                "scrollbar-width:auto !important;scrollbar-color:#059669 #d4d4d8 !important}"
+                "[data-testid='stMainBlockContainer'],.block-container{height:auto !important;max-height:none !important}"
+                "::-webkit-scrollbar{width:22px !important;height:22px !important}"
+                "::-webkit-scrollbar-track{background:#d4d4d8 !important}"
+                "::-webkit-scrollbar-thumb{background:#059669 !important;border-radius:11px;border:4px solid #d4d4d8 !important;min-height:70px}"
+                "::-webkit-scrollbar-thumb:hover{background:#047857 !important}</style>", unsafe_allow_html=True)
+
+
 init_db()
 restore_missing_from_dropbox()
+apply_global_css()
 
 for _k, _v in {"logged_in": False, "username": None, "name": None, "role": None}.items():
     st.session_state.setdefault(_k, _v)
@@ -4327,19 +4360,7 @@ def render_hidden_tools():
     """Invisible controls driven by the page's buttons. Nothing here is ever shown on screen."""
     store, month, year = ctx["store"], ctx["month"], ctx["year"]
     ver = st.session_state.setdefault("upl_ver", 0)
-    st.markdown("<style>.stApp,[data-testid='stAppViewContainer'],[data-testid='stMain'],.main{background:#f4f4f5 !important}"
-                "[data-stale='true'],[data-stale='true'] *{opacity:1 !important;filter:none !important;transition:none !important}"
-                "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
-                "[data-testid='stHeader']{background:transparent !important}"
-                "iframe{background:#f4f4f5}"
-                "html{scrollbar-width:auto !important;scrollbar-color:#059669 #d4d4d8 !important;overflow-y:scroll !important;overflow-x:hidden !important;height:auto !important}"
-                "body{overflow:visible !important;height:auto !important}"
-                ".stApp,[data-testid='stApp'],[data-testid='stAppViewContainer'],[data-testid='stMain'],section.main,.main,"
-                "[data-testid='stMainBlockContainer'],.block-container{overflow:visible !important;height:auto !important;max-height:none !important;min-height:0 !important}"
-                "::-webkit-scrollbar{width:22px !important;height:22px !important}"
-                "::-webkit-scrollbar-track{background:#d4d4d8 !important}"
-                "::-webkit-scrollbar-thumb{background:#059669 !important;border-radius:11px;border:4px solid #d4d4d8 !important;min-height:70px}"
-                "::-webkit-scrollbar-thumb:hover{background:#047857 !important}</style>", unsafe_allow_html=True)
+
     st.markdown("<style>.st-key-oz_hidden_tools{position:fixed !important;left:-10000px !important;top:0 !important;"
                 "width:1px !important;height:1px !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}"
                 "</style>", unsafe_allow_html=True)
