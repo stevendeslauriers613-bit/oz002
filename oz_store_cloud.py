@@ -3716,7 +3716,7 @@ def store_file(spk: str, cat: str, name: str, data: bytes):
     return {**meta, "backend": "local", "path": str(p)}, warn
 
 
-@st.cache_data(ttl=600, show_spinner=False, max_entries=32)
+@st.cache_data(ttl=600, show_spinner=False, max_entries=128)
 def _dbx_bytes(path: str) -> bytes:
     dbx = get_dropbox_client()
     if not dbx:
@@ -3781,10 +3781,16 @@ def rec_to_engine(rec: dict) -> dict:
     }
 
 
-def gather_documents(payload: dict):
+_IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif", ".bmp", ".tif", ".tiff")
+
+
+def gather_documents(payload: dict, light: bool = False):
+    """light=True is used for the page: photos and receipts are not downloaded (they are only attached)."""
     docs, unreadable = [], []
     for cat, lst in (payload.get("files") or {}).items():
         for f in lst:
+            if light and (cat.startswith(("rcpt", "receipts")) or str(f.get("name", "")).lower().endswith(_IMG_EXT)):
+                continue
             data = read_file_bytes(f["meta"])
             label = DOC_LABELS.get(cat, cat)
             if data is None:
@@ -3810,7 +3816,7 @@ def analyze_cached(cat: str, name: str, data: bytes):
     return analyze_doc(cat, name, data, parse_table(data, name))
 
 
-def compute_facts(docs: list):
+def compute_facts(docs: list, want_tables: bool = True):
     """Read every uploaded file. -> (sheet tables, generic table totals, one info dict per file)."""
     tables, facts, infos = {}, [], []
     for d in docs:
@@ -3820,7 +3826,7 @@ def compute_facts(docs: list):
         info = dict(analyze_cached(cat, d["name"], d["data"]))
         info["key"], info["label"] = d["key"], d["label"]
         infos.append(info)
-        if info["kind"] != "ocs_invoice":
+        if want_tables and info["kind"] != "ocs_invoice":
             df = parse_table(d["data"], d["name"])
             if df is not None and not df.empty:
                 tables[d["key"]] = (d["label"], df)
@@ -4355,8 +4361,8 @@ def build_html_page() -> str:
     if rec:
         try:
             payload = rec_to_engine(rec)
-            docs, _bad = gather_documents(payload)
-            _t, payload["doc_facts"], payload["docs_info"] = compute_facts(docs)
+            docs, _bad = gather_documents(payload, light=True)
+            _t, payload["doc_facts"], payload["docs_info"] = compute_facts(docs, want_tables=False)
             inc = build_income(payload)
             from_greenline = inc["cogs"]["src"].startswith("Greenline")
             page_facts = {
