@@ -1339,7 +1339,7 @@ HTML_CODE = r"""<!DOCTYPE html>
             renderStoredFiles();
             updateCompletionBadge();
             updateFinancialSummary();
-            saveLocalOnly();
+            saveAllData(true);
         }
 
         function renderInventoryTable() {
@@ -1410,7 +1410,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                 renderInventoryTable();
                 renderStoredFiles();
                 updateCompletionBadge();
-                saveLocalOnly();
+                saveAllData(true);
             }
         }
 
@@ -2193,7 +2193,8 @@ def gather_documents(payload: dict):
             if data is None:
                 unreadable.append((label, f["name"]))
             else:
-                docs.append({"key": f"{cat}:{f['id']}", "label": label, "name": f["name"], "data": data})
+                docs.append({"key": f"{cat}:{f['id']}", "label": label, "name": f["name"], "data": data,
+                             "auto": bool(f["meta"].get("auto"))})
     return docs, unreadable
 
 
@@ -2211,13 +2212,13 @@ def package_entries(store: str, period: str, payload: dict):
     docs, unreadable = gather_documents(payload)
     tables, doc_log = {}, []
     for d in docs:
-        df = parse_table(d["data"], d["name"])
+        df = None if d.get("auto") else parse_table(d["data"], d["name"])
         kb = round(len(d["data"]) / 1024, 1)
         if df is not None and not df.empty:
             tables[d["key"]] = (d["label"], df)
             doc_log.append([d["label"], d["name"], kb, f"Own sheet ({len(df)} rows)"])
         else:
-            doc_log.append([d["label"], d["name"], kb, "Attached only (PDF, image or empty)"])
+            doc_log.append([d["label"], d["name"], kb, "Auto-filed formatted inventory (see Inventory sheet)" if d.get("auto") else "Attached only (PDF, image or empty)"])
     for label, name in unreadable:
         doc_log.append([label, name, "", "NOT FOUND in storage - please upload again"])
     xlsx = build_store_workbook(store, period, payload, tables, doc_log)
@@ -2232,9 +2233,6 @@ def package_entries(store: str, period: str, payload: dict):
             n += 1
         seen.add(arc)
         entries.append((arc, d["data"]))
-    if inv_rows:
-        entries.append((f"{base}/Documents/Greenline Inventory (formatted).csv",
-                        pd.DataFrame(inv_rows).to_csv(index=False).encode("utf-8-sig")))
     return xlsx, entries, unreadable
 
 
@@ -2418,6 +2416,28 @@ def flash(kind: str, text: str):
 # ----------------------------------------------------------------------------
 # Actions sent by the page (these arrive as URL parameters)
 # ----------------------------------------------------------------------------
+def sync_auto_inventory(target: str):
+    """File the formatted inventory report (Excel) in Greenline: Inventory Summary, replacing the last auto one."""
+    rec = get_record(target)
+    if not rec:
+        return
+    files = rec["checklist_json"].setdefault("files", {})
+    g1 = files.get("green1", [])
+    for f in [f for f in g1 if f.get("auto")]:
+        delete_file_bytes(f)
+    g1 = [f for f in g1 if not f.get("auto")]
+    inv = rec.get("inventory_data")
+    if inv and inv.get("rows"):
+        df = _inventory_frame({"inventory_data": [{h: r.get(h) for h in inv["headers"]} for r in inv["rows"]]})
+        store, _, rest = target.partition("_")
+        meta, _warn = store_file(target, "green1", f"{store}_{rest}_Formatted_Inventory.xlsx",
+                                 inventory_workbook(df, f"{store} Inventory"))
+        meta["auto"] = True
+        g1.append(meta)
+    files["green1"] = g1
+    save_record(target, rec)
+
+
 def act_save_all():
     raw = query_params.get("payload", "")
     if not raw or len(raw) > 400_000:
@@ -2444,6 +2464,10 @@ def act_save_all():
         "_updated": payload.get("_updated") or 0,
     })
     save_record(target, rec)
+    try:
+        sync_auto_inventory(target)
+    except Exception:
+        log.exception("Could not file the formatted inventory report")
     ok, err = sync_all_to_dropbox()
     if query_params.get("then") == "package":
         st.session_state.panel_open = True
