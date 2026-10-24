@@ -1813,6 +1813,18 @@ HTML_CODE = r"""<!DOCTYPE html>
                                 </div>
                             </div>
 
+                            <details class="md:col-span-2 lg:col-span-3 bg-white border border-zinc-200 rounded-xl overflow-hidden" id="receipts-section">
+                                <summary class="cursor-pointer select-none px-4 py-3 text-sm font-bold text-emerald-900 bg-emerald-50 hover:bg-emerald-100">🧾 Credit Card Receipts (physical receipts - photos or scans)</summary>
+                                <div class="p-4 space-y-2">
+                                    <p class="text-xs text-zinc-500">Take a photo or scan of each paper receipt and attach it here. They are kept with this store and month and included in the accountant package.</p>
+                                    <div class="flex gap-2">
+                                        <button type="button" onclick="openUploadPanel('receipts')" class="bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-medium py-1.5 px-3 rounded-lg border border-zinc-300 transition">📎 Browse & Upload Receipts</button>
+                                        <button type="button" onclick="clearUploadField('receipts')" class="bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold px-2 py-1.5 rounded-lg border border-red-200 transition" title="Remove all receipts">🗑️</button>
+                                    </div>
+                                    <div id="files-receipts" class="flex flex-wrap gap-1.5 mt-1 text-[11px] text-zinc-600">No files uploaded</div>
+                                </div>
+                            </details>
+
                         </div>
                     </div>
                 </div>
@@ -2465,7 +2477,7 @@ HTML_CODE = r"""<!DOCTYPE html>
 
         function renderStoredFiles() {
             const spk = getSPK();
-            const cats = ['cooh', 'brinks', 'green1', 'green2', 'green3', 'mon1', 'mon2', 'ocs1', 'ocs2', 'chargebacks', 'gas1', 'gas2'];
+            const cats = ['cooh', 'brinks', 'green1', 'green2', 'green3', 'mon1', 'mon2', 'ocs1', 'ocs2', 'chargebacks', 'gas1', 'gas2', 'receipts'];
 
             cats.forEach(cat => {
                 const box = document.getElementById(`files-${cat}`);
@@ -2756,7 +2768,7 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
-APP_VERSION = "2026-10-24 r4"
+APP_VERSION = "2026-10-24 r6"
 USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
@@ -2781,6 +2793,7 @@ UPLOAD_CATS = [
     ("chargebacks", "Moneris Chargebacks"),
     ("gas1", "Gas Cards: Details"),
     ("gas2", "Gas Cards: Summary"),
+    ("receipts", "Credit Card Receipts"),
 ]
 DOC_LABELS = dict(UPLOAD_CATS)
 
@@ -3170,7 +3183,7 @@ def compute_facts(docs: list):
     """Read every uploaded file. -> (sheet tables, generic table totals, one info dict per file)."""
     tables, facts, infos = {}, [], []
     for d in docs:
-        if d.get("auto"):
+        if d.get("auto") or d["key"].startswith("receipts:"):
             continue
         cat = d["key"].split(":")[0]
         info = dict(analyze_cached(cat, d["name"], d["data"]))
