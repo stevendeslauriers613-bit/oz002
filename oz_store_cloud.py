@@ -118,60 +118,82 @@ def init_db():
 
 init_db()
 
-# --- HANDLE QUERY PARAMETER & SAVE ACTIONS ---
+# --- AUTHENTICATION STATE ---
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = None
+    st.session_state.name = None
+    st.session_state.role = None
+
+
+def get_user(username):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT name, role, password FROM users WHERE username = ?",
+        (username.lower().strip(),),
+    )
+    res = cursor.fetchone()
+    conn.close()
+    return res
+
+
+# --- HANDLE QUERY PARAMETER & API ACTIONS ---
 query_params = st.query_params
+
+# Check if save payload was sent via session storage / query mechanism
+if "save_payload_trigger" in query_params:
+    try:
+        import urllib.parse
+        payload_raw = query_params.get("payload", "")
+        if payload_raw:
+            payload = json.loads(urllib.parse.unquote(payload_raw))
+            spk = payload["spk"]
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO store_data (store_period_key, store, period, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    spk,
+                    payload.get("store", ""),
+                    payload.get("period", ""),
+                    payload.get("cooh_text", ""),
+                    payload.get("cooh_date", ""),
+                    payload.get("chargebacks_text", ""),
+                    json.dumps(payload.get("checklist_json", {})),
+                    json.dumps(payload.get("inventory_json")) if payload.get("inventory_json") else None,
+                    payload.get("inventory_filename", "")
+                )
+            )
+            conn.commit()
+            
+            # Sync master JSON to Dropbox
+            dbx = get_dropbox_client()
+            if dbx:
+                ensure_dropbox_folder(dbx)
+                cursor.execute("SELECT store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename FROM store_data")
+                all_rows = cursor.fetchall()
+                master_dict = {}
+                for r in all_rows:
+                    master_dict[r[0]] = {
+                        "cooh_text": r[1], "cooh_date": r[2], "chargebacks_text": r[3],
+                        "checklist_json": json.loads(r[4]) if r[4] else {},
+                        "inventory_data": json.loads(r[5]) if r[5] else None,
+                        "inventory_filename": r[6]
+                    }
+                upload_to_dropbox(dbx, "master_store_state.json", json.dumps(master_dict, indent=2).encode("utf-8"))
+            conn.close()
+    except Exception as e:
+        print("Save execution error:", e)
+    st.query_params.clear()
+    st.rerun()
 
 if "action" in query_params:
     action = query_params["action"]
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    if action == "save_state":
-        # Read encoded payload passed via query parameter
-        import urllib.parse
-        payload_raw = query_params.get("payload", "")
-        if payload_raw:
-            try:
-                payload = json.loads(urllib.parse.unquote(payload_raw))
-                spk = payload["spk"]
-                
-                # Save to SQLite
-                cursor.execute(
-                    "INSERT OR REPLACE INTO store_data (store_period_key, store, period, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        spk,
-                        payload.get("store", ""),
-                        payload.get("period", ""),
-                        payload.get("cooh_text", ""),
-                        payload.get("cooh_date", ""),
-                        payload.get("chargebacks_text", ""),
-                        json.dumps(payload.get("checklist_json", {})),
-                        json.dumps(payload.get("inventory_json")) if payload.get("inventory_json") else None,
-                        payload.get("inventory_filename", "")
-                    )
-                )
-                conn.commit()
-
-                # Also backup master state to Dropbox if connected
-                dbx = get_dropbox_client()
-                if dbx:
-                    ensure_dropbox_folder(dbx)
-                    # Gather all store data to sync master JSON
-                    cursor.execute("SELECT store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename FROM store_data")
-                    all_rows = cursor.fetchall()
-                    master_dict = {}
-                    for r in all_rows:
-                        master_dict[r[0]] = {
-                            "cooh_text": r[1], "cooh_date": r[2], "chargebacks_text": r[3],
-                            "checklist_json": json.loads(r[4]) if r[4] else {},
-                            "inventory_data": json.loads(r[5]) if r[5] else None,
-                            "inventory_filename": r[6]
-                        }
-                    upload_to_dropbox(dbx, "master_store_state.json", json.dumps(master_dict, indent=2).encode("utf-8"))
-            except Exception as e:
-                print("Save error:", e)
-
-    elif action == "update_user":
+    if action == "update_user":
         orig_user = query_params.get("orig_username", "").lower().strip()
         new_user = query_params.get("username", "").lower().strip()
         name = query_params.get("name", "")
@@ -257,26 +279,6 @@ if "action" in query_params:
     conn.close()
     st.query_params.clear()
     st.rerun()
-
-# --- AUTHENTICATION STATE ---
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.username = None
-    st.session_state.name = None
-    st.session_state.role = None
-
-
-def get_user(username):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT name, role, password FROM users WHERE username = ?",
-        (username.lower().strip(),),
-    )
-    res = cursor.fetchone()
-    conn.close()
-    return res
-
 
 # --- LOGIN SCREEN ---
 if not st.session_state.logged_in:
@@ -1210,7 +1212,7 @@ html_code = """
             if (saveTimeout) clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
                 saveAllData(true);
-            }, 1200);
+            }, 1500);
         }
 
         function saveAllData(isSilent = false) {
@@ -1281,11 +1283,10 @@ html_code = """
                 localStorage.setItem('oz_data_' + spk, JSON.stringify(payload));
             } catch(e) {}
 
-            // Send via query params redirect to trigger Streamlit Python backend save
             const payloadEncoded = encodeURIComponent(JSON.stringify(payload));
             
             if (!isSilent) {
-                window.location.href = `?action=save_state&payload=${payloadEncoded}`;
+                window.location.href = `?save_payload_trigger=true&payload=${payloadEncoded}`;
             } else {
                 const badge = document.getElementById('store-completion-badge');
                 if (badge) {
