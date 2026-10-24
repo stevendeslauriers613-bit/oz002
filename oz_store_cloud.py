@@ -36,11 +36,8 @@ CHECKLIST_ITEMS = [
 ]
 
 EXPENSE_FIELDS = [
-    ("rent", "Store Rent & Lease"), ("salaries", "Employee Salaries"),
-    ("utilities", "Utilities"), ("advertising", "Advertising"), ("marketing", "Marketing"),
-    ("datadeals", "Data Deals & Analytics"), ("insurance", "Insurance"),
-    ("garbage", "Garbage Disposal"), ("security", "Security & POS"),
-    ("licenses", "Licenses & Compliance"),
+    ("rent", "Rent"), ("payroll", "Payroll"), ("utilities", "Utilities"), ("insurance", "Insurance"),
+    ("systemfees", "System Fees"), ("repairs", "Repairs"), ("other", "Other"),
 ]
 
 DOC_NAME = dict(CHECKLIST_ITEMS)
@@ -77,7 +74,8 @@ def parse_money(value) -> float:
 
 
 def total_expenses(payload: dict) -> float:
-    return sum(parse_money(v) for v in (payload.get("expenses") or {}).values())
+    exp = payload.get("expenses") or {}
+    return sum(parse_money(exp.get(k)) for k, _ in EXPENSE_FIELDS)
 
 
 def missing_docs(payload: dict) -> list[str]:
@@ -2388,87 +2386,46 @@ HTML_CODE = r"""<!DOCTYPE html>
                     </table>
                 </div>
 
-                <!-- Monthly Financial Summary Report (Executive Owner View) -->
-                <div class="hidden" aria-hidden="true" style="display:none">
-                    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-                        <h4 class="text-base font-bold text-emerald-300">Monthly Financial Summary & Owner Expense Report</h4>
-                        <button onclick="openOwnerReport()" class="bg-white hover:bg-emerald-50 text-emerald-800 text-xs font-bold px-3.5 py-2 rounded-xl border border-emerald-300 transition">📄 Owner Report (printable)</button>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                        <div class="bg-emerald-800/50 p-3 rounded-lg">
-                            <span class="text-xs text-emerald-300 block">Total Sales (Inventory Sold)</span>
-                            <span id="fin-total-sales" class="text-lg font-bold text-white">$0.00</span>
-                        </div>
-                        <div class="bg-emerald-800/50 p-3 rounded-lg">
-                            <span class="text-xs text-emerald-300 block">Cost of Goods Sold (COGS)</span>
-                            <span id="fin-cogs" class="text-lg font-bold text-emerald-200">$0.00</span>
-                            <span id="fin-gross-margin" class="text-[11px] text-emerald-200 block">Gross Margin: 0%</span>
-                        </div>
-                        <div class="bg-emerald-800/50 p-3 rounded-lg">
-                            <span class="text-xs text-emerald-300 block">Net Operating Income (NOI)</span>
-                            <span id="fin-net" class="text-lg font-bold text-white">$0.00</span>
-                        </div>
-                        <div class="bg-emerald-800/50 p-3 rounded-lg">
-                            <span class="text-xs text-emerald-300 block">Operating Margin</span>
-                            <span id="fin-net-margin" class="text-lg font-bold text-amber-300">0.0%</span>
-                        </div>
-                    </div>
-
-                    <div id="doc-facts-box" class="mb-6"></div>
-
-                    <h5 class="text-sm font-bold text-emerald-300 mb-3">Operating Expenses (Editable Fields)</h5>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
+                <!-- ================= MONTHLY EXPENSE REPORT ================= -->
+                <div class="mt-6 bg-emerald-900/40 rounded-xl border border-emerald-800 p-5" id="expense-report-section">
+                    <h4 class="text-base font-bold text-emerald-300 mb-1">Monthly Expenses &amp; Report</h4>
+                    <p class="text-xs text-emerald-200/70 mb-4">Enter this month's expenses for the selected store, then press Generate Report. Sales, cost of goods, card fees and fuel are read from the documents you uploaded.</p>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                         <div>
-                            <label class="text-[11px] text-emerald-200 block">Store Rent & Lease</label>
-                            <input type="text" id="exp-rent" value="2000.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
+                            <label class="text-[11px] text-emerald-200 block mb-1">Rent</label>
+                            <input type="text" inputmode="decimal" id="exp-rent" placeholder="0.00" oninput="onExpenseInput()" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1.5 text-sm">
                         </div>
                         <div>
-                            <label class="text-[11px] text-emerald-200 block">Employee Salaries</label>
-                            <input type="text" id="exp-salaries" value="1950.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
+                            <label class="text-[11px] text-emerald-200 block mb-1">Payroll</label>
+                            <input type="text" inputmode="decimal" id="exp-payroll" placeholder="0.00" oninput="onExpenseInput()" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1.5 text-sm">
                         </div>
                         <div>
-                            <label class="text-[11px] text-emerald-200 block">Utilities</label>
-                            <input type="text" id="exp-utilities" value="1200.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
+                            <label class="text-[11px] text-emerald-200 block mb-1">Utilities</label>
+                            <input type="text" inputmode="decimal" id="exp-utilities" placeholder="0.00" oninput="onExpenseInput()" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1.5 text-sm">
                         </div>
                         <div>
-                            <label class="text-[11px] text-emerald-200 block">Advertising</label>
-                            <input type="text" id="exp-advertising" value="1000.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
+                            <label class="text-[11px] text-emerald-200 block mb-1">Insurance</label>
+                            <input type="text" inputmode="decimal" id="exp-insurance" placeholder="0.00" oninput="onExpenseInput()" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1.5 text-sm">
                         </div>
                         <div>
-                            <label class="text-[11px] text-emerald-200 block">Marketing</label>
-                            <input type="text" id="exp-marketing" value="800.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
+                            <label class="text-[11px] text-emerald-200 block mb-1">System Fees</label>
+                            <input type="text" inputmode="decimal" id="exp-systemfees" placeholder="0.00" oninput="onExpenseInput()" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1.5 text-sm">
                         </div>
                         <div>
-                            <label class="text-[11px] text-emerald-200 block">Data Deals & Analytics</label>
-                            <input type="text" id="exp-datadeals" value="1500.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
+                            <label class="text-[11px] text-emerald-200 block mb-1">Repairs</label>
+                            <input type="text" inputmode="decimal" id="exp-repairs" placeholder="0.00" oninput="onExpenseInput()" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1.5 text-sm">
                         </div>
                         <div>
-                            <label class="text-[11px] text-emerald-200 block">Insurance</label>
-                            <input type="text" id="exp-insurance" value="500.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
-                        </div>
-                        <div>
-                            <label class="text-[11px] text-emerald-200 block">Garbage Disposal</label>
-                            <input type="text" id="exp-garbage" value="150.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
-                        </div>
-                        <div>
-                            <label class="text-[11px] text-emerald-200 block">Security & POS Software</label>
-                            <input type="text" id="exp-security" value="350.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
-                        </div>
-                        <div>
-                            <label class="text-[11px] text-emerald-200 block">Licenses & Compliance</label>
-                            <input type="text" id="exp-licenses" value="300.00" oninput="updateFinancialSummary(); saveLocalOnly();" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1 text-xs">
+                            <label class="text-[11px] text-emerald-200 block mb-1">Other</label>
+                            <input type="text" inputmode="decimal" id="exp-other" placeholder="0.00" oninput="onExpenseInput()" class="w-full bg-emerald-950 text-white border border-emerald-700 rounded px-2 py-1.5 text-sm">
                         </div>
                     </div>
-
-                    <div class="bg-emerald-800/30 p-3 rounded-lg mb-3 flex justify-between items-center">
-                        <span class="text-xs text-emerald-300 font-bold">Total Operating Expenses (OpEx):</span>
-                        <span id="fin-total-expenses" class="text-sm font-bold text-white">$0.00</span>
+                    <div class="flex flex-wrap gap-2 mb-2">
+                        <button type="button" onclick="generateExpenseReport(true)" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-xl border border-emerald-400 transition">📊 Generate Report</button>
+                        <button type="button" onclick="downloadDetailedReport()" class="bg-white hover:bg-emerald-50 text-emerald-800 text-sm font-bold px-4 py-2 rounded-xl border border-emerald-300 transition">⬇️ Download Detailed Accounting Report</button>
                     </div>
-
-                    <div class="text-xs text-emerald-200/70">
-                        <p>Total Sales and Cost of Goods Sold (COGS) are auto-calculated from your uploaded Greenline inventory CSV. Operating Expenses are fully editable above and saved when you press <b>Save All to Cloud</b>.</p>
-                    </div>
+                    <p class="text-[11px] text-emerald-200/60">Expenses are saved with the store and month when you press Generate Report or Download. The detailed report is an Excel file built from every file uploaded.</p>
+                    <div id="expense-report" class="mt-4"></div>
                 </div>
             </div>
 
@@ -2644,16 +2601,13 @@ HTML_CODE = r"""<!DOCTYPE html>
                     }
                     if (chkData.expenses) {
                         const exp = chkData.expenses;
-                        if (exp.rent !== undefined) document.getElementById('exp-rent').value = exp.rent;
-                        if (exp.salaries !== undefined) document.getElementById('exp-salaries').value = exp.salaries;
-                        if (exp.utilities !== undefined) document.getElementById('exp-utilities').value = exp.utilities;
-                        if (exp.advertising !== undefined) document.getElementById('exp-advertising').value = exp.advertising;
-                        if (exp.marketing !== undefined) document.getElementById('exp-marketing').value = exp.marketing;
-                        if (exp.datadeals !== undefined) document.getElementById('exp-datadeals').value = exp.datadeals;
-                        if (exp.insurance !== undefined) document.getElementById('exp-insurance').value = exp.insurance;
-                        if (exp.garbage !== undefined) document.getElementById('exp-garbage').value = exp.garbage;
-                        if (exp.security !== undefined) document.getElementById('exp-security').value = exp.security;
-                        if (exp.licenses !== undefined) document.getElementById('exp-licenses').value = exp.licenses;
+                        if (exp.rent !== undefined) { const el = document.getElementById('exp-rent'); if (el) el.value = exp.rent; }
+                        if (exp.payroll !== undefined) { const el = document.getElementById('exp-payroll'); if (el) el.value = exp.payroll; }
+                        if (exp.utilities !== undefined) { const el = document.getElementById('exp-utilities'); if (el) el.value = exp.utilities; }
+                        if (exp.insurance !== undefined) { const el = document.getElementById('exp-insurance'); if (el) el.value = exp.insurance; }
+                        if (exp.systemfees !== undefined) { const el = document.getElementById('exp-systemfees'); if (el) el.value = exp.systemfees; }
+                        if (exp.repairs !== undefined) { const el = document.getElementById('exp-repairs'); if (el) el.value = exp.repairs; }
+                        if (exp.other !== undefined) { const el = document.getElementById('exp-other'); if (el) el.value = exp.other; }
                     }
                 }
                 const invObj = data.inventory_data || data.inventory_json;
@@ -2854,18 +2808,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                 'brinks': document.getElementById('brinks-date')?.value || ''
             };
 
-            const expenses = {
-                rent: document.getElementById('exp-rent')?.value || '',
-                salaries: document.getElementById('exp-salaries')?.value || '',
-                utilities: document.getElementById('exp-utilities')?.value || '',
-                advertising: document.getElementById('exp-advertising')?.value || '',
-                marketing: document.getElementById('exp-marketing')?.value || '',
-                datadeals: document.getElementById('exp-datadeals')?.value || '',
-                insurance: document.getElementById('exp-insurance')?.value || '',
-                garbage: document.getElementById('exp-garbage')?.value || '',
-                security: document.getElementById('exp-security')?.value || '',
-                licenses: document.getElementById('exp-licenses')?.value || ''
-            };
+            const expenses = {rent: document.getElementById('exp-rent')?.value || '', payroll: document.getElementById('exp-payroll')?.value || '', utilities: document.getElementById('exp-utilities')?.value || '', insurance: document.getElementById('exp-insurance')?.value || '', systemfees: document.getElementById('exp-systemfees')?.value || '', repairs: document.getElementById('exp-repairs')?.value || '', other: document.getElementById('exp-other')?.value || ''};
 
             const checklistData = {
                 checkboxes: checkboxes,
@@ -3191,6 +3134,115 @@ HTML_CODE = r"""<!DOCTYPE html>
             } catch(e) {
                 console.error("updateFinancialSummary error:", e);
             }
+        }
+
+
+        // ===== Expense report (redesigned) =====
+        const EXP_LABELS = [["rent","Rent"],["payroll","Payroll"],["utilities","Utilities"],["insurance","Insurance"],["systemfees","System Fees"],["repairs","Repairs"],["other","Other"]];
+        let expenseReportShown = false;
+        try { expenseReportShown = sessionStorage.getItem('oz_exp_report') === '1'; } catch(e) {}
+
+        function moneyFmt(n) { n = Number(n) || 0; return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+        function pctFmt(n) { return (Number(n) || 0).toFixed(1) + '%'; }
+
+        function computeFinancials() {
+            const spk = getSPK();
+            const inv = storeInventoryData[spk];
+            let sales = 0, cogs = 0;
+            if (inv && inv.rows && inv.headers) {
+                const soldHeader = inv.headers.find(h => h && h.toLowerCase().includes('sold'));
+                const costHeader = inv.headers.find(h => h && h.toLowerCase().includes('cost'));
+                inv.rows.forEach(row => {
+                    let sv = 0;
+                    if (soldHeader && row[soldHeader] !== undefined) sv = parseFloat(String(row[soldHeader]).replace(/[^0-9.-]/g, '')) || 0;
+                    sales += sv;
+                    if (costHeader && row[costHeader] !== undefined) cogs += parseFloat(String(row[costHeader]).replace(/[^0-9.-]/g, '')) || 0;
+                });
+            }
+            const invSold = sales, invCost = cogs;
+            let salesSrc = invSold > 0 ? 'Inventory sold column' : '', cogsSrc = invCost > 0 ? 'Inventory cost column' : '';
+            if (docFacts && docFacts.sales > 0) {
+                sales = docFacts.sales; salesSrc = docFacts.sales_src;
+                if (docFacts.cogs > 0) { cogs = docFacts.cogs; cogsSrc = docFacts.cogs_src; }
+                else if (invCost === 0 && invSold > 0) { cogs = invSold; cogsSrc = 'Inventory sold, valued at cost'; }
+            }
+            if (cogs === 0 && sales > 0) { cogs = sales * 0.80; cogsSrc = 'Estimated at 80% of sales (upload Greenline Financials for the real figure)'; }
+            const num = id => { const el = document.getElementById(id); return el ? (parseFloat(String(el.value).replace(/[^0-9.-]/g, '')) || 0) : 0; };
+            const lines = EXP_LABELS.map(([k, label]) => ({ label: label, amount: num('exp-' + k), src: 'Entered' }));
+            const extra = ((docFacts && docFacts.extra) ? docFacts.extra : []).map(x => ({ label: x.label, amount: Number(x.total) || 0, src: 'From documents' }));
+            const all = lines.concat(extra);
+            const totalExp = all.reduce((a, x) => a + x.amount, 0);
+            const gross = sales - cogs, noi = gross - totalExp;
+            return { sales, cogs, gross, grossMargin: sales > 0 ? gross / sales * 100 : 0, lines: all, totalExp,
+                     expPct: sales > 0 ? totalExp / sales * 100 : 0, noi, opMargin: sales > 0 ? noi / sales * 100 : 0, salesSrc, cogsSrc };
+        }
+
+        function generateExpenseReport(userClick) {
+            const box = document.getElementById('expense-report');
+            if (!box) return;
+            expenseReportShown = true;
+            try { sessionStorage.setItem('oz_exp_report', '1'); } catch(e) {}
+            const f = computeFinancials();
+            const row = (label, val, cls, sub) => '<tr class="border-t border-zinc-200"><td class="py-1.5 pr-3 ' + (cls || '') + '">' + label +
+                (sub ? '<div class="text-[11px] font-normal text-zinc-500">' + esc(sub) + '</div>' : '') + '</td><td class="py-1.5 text-right whitespace-nowrap ' + (cls || '') + '">' + val + '</td></tr>';
+            const neg = v => v < 0 ? 'text-red-600' : 'text-emerald-800';
+            const expRows = f.lines.filter(x => x.amount !== 0 || x.src === 'Entered').map(x => row(esc(x.label), moneyFmt(x.amount), 'text-zinc-800', x.src === 'From documents' ? 'from your uploaded documents' : '')).join('');
+            const noData = f.sales === 0 ? '<p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3">No sales figures were found for this store and month yet. Upload the Greenline Financials report (and the others) in the checklist above, tick them and press Save All to Cloud.</p>' : '';
+            box.innerHTML = '<div class="bg-white text-zinc-900 rounded-xl p-5 shadow">' +
+                '<h5 class="text-base font-bold text-emerald-900">Expense Report - ' + esc(activeStore) + ' &middot; ' + esc(selectedMonth) + ' ' + esc(selectedYear) + '</h5>' +
+                '<p class="text-xs text-zinc-500 mb-3">Simple monthly summary with margins</p>' + noData +
+                '<table class="w-full text-sm"><tbody>' +
+                row('Sales', moneyFmt(f.sales), 'font-bold text-zinc-900', f.salesSrc) +
+                row('Cost of goods sold', moneyFmt(-f.cogs), 'text-zinc-800', f.cogsSrc) +
+                row('Gross profit', moneyFmt(f.gross), 'font-bold ' + neg(f.gross)) +
+                row('Gross margin', pctFmt(f.grossMargin), 'text-zinc-600') +
+                '<tr><td colspan="2" class="pt-4 pb-1 text-xs font-bold uppercase tracking-wide text-emerald-800">Expenses</td></tr>' + expRows +
+                row('Total expenses', moneyFmt(f.totalExp), 'font-bold text-zinc-900') +
+                row('Expenses as % of sales', pctFmt(f.expPct), 'text-zinc-600') +
+                '<tr class="border-t-2 border-emerald-700"><td class="pt-2 font-bold text-base ' + neg(f.noi) + '">Net operating income</td><td class="pt-2 text-right font-bold text-base ' + neg(f.noi) + '">' + moneyFmt(f.noi) + '</td></tr>' +
+                row('Operating margin', pctFmt(f.opMargin), 'font-bold ' + neg(f.opMargin)) +
+                '</tbody></table>' +
+                '<details class="mt-4"><summary class="cursor-pointer text-xs font-bold text-emerald-800">Figures read from your uploaded documents</summary><div id="doc-facts-box" class="mt-2 bg-emerald-950 rounded-lg p-3 text-emerald-100"></div></details>' +
+                '<p class="text-[11px] text-zinc-500 mt-3">Use the Download Detailed Accounting Report button for the full Excel report built from every uploaded file.</p></div>';
+            try { renderDocFacts(moneyFmt); } catch(e) {}
+            if (userClick) {
+                saveLocalOnly();
+                try { sessionStorage.setItem('oz_exp_scroll', '1'); } catch(e) {}
+                try { saveAllData(true); } catch(e) {}
+            }
+        }
+
+        function onExpenseInput() {
+            saveLocalOnly();
+            if (expenseReportShown) generateExpenseReport(false);
+        }
+
+        function updateFinancialSummary() {
+            if (expenseReportShown) { try { generateExpenseReport(false); } catch(e) { console.error(e); } }
+        }
+
+        function downloadDetailedReport() {
+            const payload = buildPayload();
+            const encoded = encodeURIComponent(JSON.stringify(payload));
+            if (encoded.length > 60000) {
+                alert('Too much data to save before building the report. Press Save All to Cloud first.');
+                return;
+            }
+            persistentStoreData[payload.spk] = payload;
+            try { localStorage.setItem('oz_data_' + payload.spk, JSON.stringify(payload)); } catch(e) {}
+            navigateParent(ctxQS('&action=save_all&then=excel&payload=' + encoded));
+        }
+
+        if (expenseReportShown) {
+            setTimeout(() => {
+                try { generateExpenseReport(false); } catch(e) {}
+                try {
+                    if (sessionStorage.getItem('oz_exp_scroll') === '1') {
+                        sessionStorage.removeItem('oz_exp_scroll');
+                        setTimeout(() => { const b = document.getElementById('expense-report'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 400);
+                    }
+                } catch(e) {}
+            }, 300);
         }
 
         initApp();
@@ -4016,6 +4068,9 @@ def act_save_all():
     ok, err = sync_all_to_dropbox()
     if query_params.get("then") == "package":
         st.session_state.auto_pkg = True
+    elif query_params.get("then") == "excel":
+        st.session_state.auto_pkg = True
+        st.session_state.dl_which = "xlsx"
     elif query_params.get("then") == "owner":
         st.session_state.scroll_owner = True
     if ok:
@@ -4179,12 +4234,15 @@ def render_hidden_tools():
         if pkg and pkg["spk"] == spk:
             base = safe_name(f"{store} - {month} {year}")
             st.download_button("zip", pkg["zip"], file_name=f"{base} - Package.zip", mime="application/zip", key="dl_zip")
+            st.download_button("xlsx", pkg["xlsx"], file_name=f"{base} - Detailed Accounting Report.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_xlsx")
             if pkg.get("unreadable"):
                 names = ", ".join(n for _l, n, *_e in pkg["unreadable"])
                 st.session_state.flash_keep = ("warning", f"Could not read from storage: {names}. Please upload again.")
     js = ""
     if st.session_state.pop("dl_now", False):
-        js += ("setTimeout(function(){try{var b=window.parent.document.querySelector('.st-key-dl_zip button');if(b)b.click();}catch(e){}},700);")
+        _which = "dl_xlsx" if st.session_state.pop("dl_which", "zip") == "xlsx" else "dl_zip"
+        js += ("setTimeout(function(){try{var b=window.parent.document.querySelector('.st-key-" + _which + " button');if(b)b.click();}catch(e){}},700);")
     if st.session_state.pop("scroll_owner", False):
         js += ("function go(){try{var f=window.parent.document.querySelectorAll('iframe');if(f.length>1)"
                "f[f.length-1].scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}}setTimeout(go,900);setTimeout(go,2000);")
