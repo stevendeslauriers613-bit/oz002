@@ -2548,7 +2548,7 @@ HTML_CODE = r"""<!DOCTYPE html>
             if (!box) return;
             const docs = (docFacts && docFacts.docs) ? docFacts.docs : [];
             if (!docs.length) {
-                box.innerHTML = '<p class="text-xs text-emerald-200/70">No documents uploaded for this store and month yet. Use the Browse buttons in the checklist to add the Greenline, Moneris, OCS and gas card reports. Their figures will appear here and feed the numbers above.</p>';
+                box.innerHTML = ((docFacts && docFacts.error) ? '<p class="text-xs text-red-300 font-bold mb-2">Problem reading your documents: ' + esc(docFacts.error) + '</p>' : '') + '<p class="text-xs text-emerald-200/70">No documents uploaded for this store and month yet. Use the Browse buttons in the checklist to add the Greenline, Moneris, OCS and gas card reports. Their figures will appear here and feed the numbers above.</p>';
                 return;
             }
             const val = (l) => (typeof l[1] === 'string') ? esc(l[1]) : ((l[0] === 'Days' || l[0] === 'Litres') ? Number(l[1]).toLocaleString(undefined, {maximumFractionDigits: 1}) : formatMoney(Number(l[1]) || 0));
@@ -2556,12 +2556,14 @@ HTML_CODE = r"""<!DOCTYPE html>
                 if (d.status === 'read' && d.lines && d.lines.length) {
                     return d.lines.map(l => '<span class="inline-block mr-3"><span class="text-emerald-300">' + esc(l[0]) + ':</span> <span class="font-bold text-white">' + val(l) + '</span></span>').join('');
                 }
+                if (d.status === 'unreadable') return '<span class="text-red-300 font-bold">Could not be opened from storage. Upload it again (use Browse, then Remove files that are missing from storage).</span><div class="text-[11px] text-red-200 mt-0.5">' + esc(d.error || '') + '</div>';
                 if (d.status === 'attached') return '<span class="text-amber-300">Attached to the package (a photo, or numbers could not be read from this file).</span>';
                 const cols = (d.cols || []).map(c => esc(c.name) + ' ' + formatMoney(Number(c.total) || 0)).join(' &middot; ');
                 return '<span class="text-amber-300">Read ' + d.rows + ' rows but no sales/total line was recognised.</span><div class="text-[11px] text-emerald-300/70 mt-0.5">Columns: ' + esc((d.headers || []).join(', ')) + (cols ? '<br>Totals: ' + cols : '') + '</div>';
             };
             const extra = (docFacts && docFacts.extra) ? docFacts.extra : [];
-            box.innerHTML = '<h5 class="text-sm font-bold text-emerald-300 mb-3">Figures read from your uploaded documents</h5>' +
+            const errHtml = (docFacts && docFacts.error) ? '<p class="text-xs text-red-300 font-bold mb-2">Problem reading your documents: ' + esc(docFacts.error) + '</p>' : '';
+            box.innerHTML = errHtml + '<h5 class="text-sm font-bold text-emerald-300 mb-3">Figures read from your uploaded documents</h5>' +
                 '<div class="overflow-x-auto rounded-lg border border-emerald-800"><table class="w-full text-left text-xs text-emerald-100">' +
                 '<thead class="bg-emerald-800/60 text-emerald-300"><tr><th class="p-2">Document</th><th class="p-2">File</th><th class="p-2">What was read</th></tr></thead><tbody>' +
                 docs.map(d => '<tr class="border-t border-emerald-800 align-top"><td class="p-2 font-medium text-white">' + esc(d.label) + '</td><td class="p-2">' + esc(d.file) + '</td><td class="p-2">' + result(d) + '</td></tr>').join('') +
@@ -2743,7 +2745,7 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
-APP_VERSION = "2026-10-24 r3"
+APP_VERSION = "2026-10-24 r4"
 USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
@@ -3067,14 +3069,18 @@ def _dbx_bytes(path: str) -> bytes:
     return _dbx_get(dbx, path)
 
 
+_READ_ERR: dict = {}
+
+
 def read_file_bytes(meta: dict):
     try:
         if meta.get("backend") == "dropbox":
             return _dbx_bytes(meta["path"])
         p = Path(meta.get("path", ""))
         return p.read_bytes() if p.is_file() else None
-    except Exception:
+    except Exception as e:
         log.exception("Could not read %s", meta.get("filename"))
+        _READ_ERR[meta.get("id")] = f"{type(e).__name__}: {e}"
         return None
 
 
@@ -3127,7 +3133,7 @@ def gather_documents(payload: dict):
             data = read_file_bytes(f["meta"])
             label = DOC_LABELS.get(cat, cat)
             if data is None:
-                unreadable.append((label, f["name"]))
+                unreadable.append((label, f["name"], _READ_ERR.get(f.get("id"), "file not found in storage")))
             else:
                 docs.append({"key": f"{cat}:{f['id']}", "label": label, "name": f["name"], "data": data,
                              "auto": bool(f["meta"].get("auto"))})
@@ -3210,7 +3216,7 @@ def package_entries(store: str, period: str, payload: dict):
         else:
             note = "Attached only (photo, or numbers could not be read)"
         doc_log.append([d["label"], d["name"], kb, note])
-    for label, name in unreadable:
+    for label, name, *_e in unreadable:
         doc_log.append([label, name, "", "NOT FOUND in storage - please upload again"])
     xlsx = build_store_workbook(store, period, payload, tables, doc_log)
     owner_html = build_owner_report_html(store, period, payload)
@@ -3615,6 +3621,9 @@ def render_panel():
                     problems.append(warn)
             if metas:
                 add_files_to_record(spk, cat, metas)
+                if read_file_bytes(metas[0]) is None:
+                    problems.append("The file was saved but could not be read back from storage: "
+                                    + _READ_ERR.get(metas[0].get("id"), "unknown error"))
                 synced, err = sync_all_to_dropbox()
                 if not synced:
                     problems.append(f"Dropbox sync failed: {err}")
@@ -3624,6 +3633,27 @@ def render_panel():
                 flash("warning", f"{ok_n} file(s) saved to {DOC_LABELS[cat]}. " + " ".join(dict.fromkeys(problems)))
             else:
                 flash("success", f"{ok_n} file(s) saved to {DOC_LABELS[cat]}. Tick its box in the checklist and press Save All.")
+            st.rerun()
+
+        if st.button("🧹 Remove files that are missing from storage", key="clean_missing", **STRETCH):
+            rec_c = get_record(spk)
+            files_c = ((rec_c or {}).get("checklist_json") or {}).get("files", {})
+            removed = 0
+            for cat_c in list(files_c):
+                keep = []
+                for f_c in files_c[cat_c]:
+                    if read_file_bytes(f_c) is None:
+                        removed += 1
+                    else:
+                        keep.append(f_c)
+                files_c[cat_c] = keep
+            if rec_c is not None and removed:
+                save_record(spk, rec_c)
+                sync_all_to_dropbox()
+            st.session_state.panel_open = True
+            flash("success" if removed else "info",
+                  f"Removed {removed} file record(s) whose file could not be found. Upload those documents again, then press Save All to Cloud."
+                  if removed else "Every saved file was found in storage.")
             st.rerun()
 
         st.markdown("**Accountant package**")
@@ -3642,7 +3672,7 @@ def render_panel():
         if pkg and pkg["spk"] == spk:
             base = safe_name(f"{store} - {month} {year}")
             st.success(f"Package ready: {pkg['n_docs']} document(s) included (built {pkg['at']}).")
-            for label, name in pkg["unreadable"]:
+            for label, name, *_e in pkg["unreadable"]:
                 st.warning(f"Couldn't read {name} ({label}) from storage; please upload it again.")
             d1, d2 = st.columns(2)
             d1.download_button("⬇️ Excel report", pkg["xlsx"], file_name=f"{base} - Report.xlsx",
@@ -3722,10 +3752,13 @@ def build_html_page() -> str:
                 "sales": inc["revenue"]["net"] if inc["revenue"]["from_docs"] else 0, "sales_src": inc["revenue"]["src"],
                 "cogs": inc["cogs"]["amount"] if from_greenline else 0, "cogs_src": inc["cogs"]["src"],
                 "extra": [{"label": x["label"], "total": x["amount"]} for x in inc["extra_expenses"]],
-                "docs": describe_docs(payload["docs_info"]),
+                "docs": describe_docs(payload["docs_info"]) + [
+                    {"label": lab, "file": nm, "status": "unreadable", "lines": [], "rows": 0, "headers": [], "cols": [], "error": err}
+                    for lab, nm, err in _bad],
             }
-        except Exception:
+        except Exception as ex:
             log.exception("Could not read totals from the uploaded documents")
+            page_facts["error"] = f"{type(ex).__name__}: {ex}"
 
     cred_rows = ""
     if role == "admin":
@@ -3800,5 +3833,7 @@ try:
                 "Save All to Cloud or upload a document. To keep a copy, use your browser's Print and choose Save as PDF.</p></div>",
                 unsafe_allow_html=True)
             components.html(_owner_html.replace("</body>", _AUTOSIZE + "</body>"), height=2600, scrolling=False)
-except Exception:
+except Exception as _ex:
     log.exception("Could not build the owner report")
+    st.warning(f"The owner report could not be built: {type(_ex).__name__}: {_ex}")
+st.caption(f"App version {APP_VERSION}")
