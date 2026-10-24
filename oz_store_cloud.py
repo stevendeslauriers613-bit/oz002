@@ -3451,6 +3451,15 @@ def secret(name, default=None):
 # ----------------------------------------------------------------------------
 # Dropbox
 # ----------------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def _make_dropbox_client(key, sec, rt, token, cred_file_token):
+    import dropbox
+    if key and sec and rt:
+        return dropbox.Dropbox(oauth2_refresh_token=rt, app_key=key, app_secret=sec)
+    t = token or cred_file_token
+    return dropbox.Dropbox(t) if t else None
+
+
 def get_dropbox_client():
     """Refresh-token login (never expires) if configured, else the access token."""
     try:
@@ -3459,16 +3468,12 @@ def get_dropbox_client():
         return None
     try:
         key, sec, rt = secret("DROPBOX_APP_KEY"), secret("DROPBOX_APP_SECRET"), secret("DROPBOX_REFRESH_TOKEN")
-        if key and sec and rt:
-            return dropbox.Dropbox(oauth2_refresh_token=rt, app_key=key, app_secret=sec)
         token = secret("DROPBOX_ACCESS_TOKEN")
-        if token:
-            return dropbox.Dropbox(token)
-        if os.path.exists(DROPBOX_CREDENTIALS_FILE):
+        cred_tok = None
+        if not (key and sec and rt) and not token and os.path.exists(DROPBOX_CREDENTIALS_FILE):
             with open(DROPBOX_CREDENTIALS_FILE, "r") as f:
-                token = json.load(f).get("access_token")
-            if token:
-                return dropbox.Dropbox(token)
+                cred_tok = json.load(f).get("access_token")
+        return _make_dropbox_client(key, sec, rt, token, cred_tok)
     except Exception:
         log.exception("Dropbox client could not be created")
     return None
@@ -4359,23 +4364,44 @@ def build_html_page() -> str:
 
     page_facts = {"sales": 0, "sales_src": "", "cogs": 0, "cogs_src": "", "extra": [], "docs": []}
     if rec:
+        sig = "v2:" + ",".join(sorted(str(f.get("id")) for lst in ((rec["checklist_json"].get("files")) or {}).values() for f in lst))
+        cached_facts = None
         try:
-            payload = rec_to_engine(rec)
-            docs, _bad = gather_documents(payload, light=True)
-            _t, payload["doc_facts"], payload["docs_info"] = compute_facts(docs, want_tables=False)
-            inc = build_income(payload)
-            from_greenline = inc["cogs"]["src"].startswith("Greenline")
-            page_facts = {
-                "sales": inc["revenue"]["net"] if inc["revenue"]["from_docs"] else 0, "sales_src": inc["revenue"]["src"],
-                "cogs": inc["cogs"]["amount"] if from_greenline else 0, "cogs_src": inc["cogs"]["src"],
-                "extra": [{"label": x["label"], "total": x["amount"]} for x in inc["extra_expenses"]],
-                "docs": describe_docs(payload["docs_info"]) + [
-                    {"label": lab, "file": nm, "status": "unreadable", "lines": [], "rows": 0, "headers": [], "cols": [], "error": err}
-                    for lab, nm, err in _bad],
-            }
-        except Exception as ex:
-            log.exception("Could not read totals from the uploaded documents")
-            page_facts["error"] = f"{type(ex).__name__}: {ex}"
+            with _connect() as conn:
+                row = conn.execute("SELECT v FROM app_meta WHERE k = ?", (f"facts:{spk}",)).fetchone()
+            if row:
+                c = json.loads(row[0])
+                if c.get("sig") == sig:
+                    cached_facts = c.get("facts")
+        except Exception:
+            log.exception("Could not read stored document totals")
+        if cached_facts:
+            page_facts = cached_facts
+        else:
+            try:
+                payload = rec_to_engine(rec)
+                docs, _bad = gather_documents(payload, light=True)
+                _t, payload["doc_facts"], payload["docs_info"] = compute_facts(docs, want_tables=False)
+                inc = build_income(payload)
+                from_greenline = inc["cogs"]["src"].startswith("Greenline")
+                page_facts = {
+                    "sales": inc["revenue"]["net"] if inc["revenue"]["from_docs"] else 0, "sales_src": inc["revenue"]["src"],
+                    "cogs": inc["cogs"]["amount"] if from_greenline else 0, "cogs_src": inc["cogs"]["src"],
+                    "extra": [{"label": x["label"], "total": x["amount"]} for x in inc["extra_expenses"]],
+                    "docs": describe_docs(payload["docs_info"]) + [
+                        {"label": lab, "file": nm, "status": "unreadable", "lines": [], "rows": 0, "headers": [], "cols": [], "error": err}
+                        for lab, nm, err in _bad],
+                }
+                if not _bad:
+                    try:
+                        with _connect() as conn:
+                            conn.execute("INSERT OR REPLACE INTO app_meta VALUES (?, ?)",
+                                         (f"facts:{spk}", json.dumps({"sig": sig, "facts": page_facts}, default=str)))
+                    except Exception:
+                        log.exception("Could not store document totals")
+            except Exception as ex:
+                log.exception("Could not read totals from the uploaded documents")
+                page_facts["error"] = f"{type(ex).__name__}: {ex}"
 
     cred_rows = ""
     if role == "admin":
