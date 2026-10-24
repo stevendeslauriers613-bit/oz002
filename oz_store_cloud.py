@@ -3311,7 +3311,6 @@ HTML_CODE = r"""<!DOCTYPE html>
       }
       if (keeper){
         all.forEach(function(e){ if (e === keeper) e.classList.remove('oz-noscroll'); else e.classList.add('oz-noscroll'); });
-        d.documentElement.classList.add('oz-noscroll'); d.body.classList.add('oz-noscroll');
       }
     }catch(e){}
   }
@@ -3328,7 +3327,7 @@ HTML_CODE = r"""<!DOCTYPE html>
       var d = window.parent.document;
       var c = [d.querySelector('[data-testid="stMain"]'), d.querySelector('section.main'), d.querySelector('[data-testid="stAppViewContainer"]'), d.scrollingElement];
       for (var i=0;i<c.length;i++){ if (c[i] && c[i].scrollHeight > c[i].clientHeight + 5) return c[i]; }
-      return c[0] || c[3];
+      return c[3] || c[0];
     }catch(e){ return null; }
   }
   window.addEventListener('pagehide', function(){
@@ -4333,7 +4332,10 @@ def render_hidden_tools():
                 "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
                 "[data-testid='stHeader']{background:transparent !important}"
                 "iframe{background:#f4f4f5}"
-                "html,body,[data-testid='stMain'],section.main,[data-testid='stAppViewContainer']{scrollbar-width:auto !important;scrollbar-color:#059669 #d4d4d8 !important}"
+                "html{scrollbar-width:auto !important;scrollbar-color:#059669 #d4d4d8 !important;overflow-y:scroll !important;overflow-x:hidden !important;height:auto !important}"
+                "body{overflow:visible !important;height:auto !important}"
+                ".stApp,[data-testid='stApp'],[data-testid='stAppViewContainer'],[data-testid='stMain'],section.main,.main,"
+                "[data-testid='stMainBlockContainer'],.block-container{overflow:visible !important;height:auto !important;max-height:none !important;min-height:0 !important}"
                 "::-webkit-scrollbar{width:22px !important;height:22px !important}"
                 "::-webkit-scrollbar-track{background:#d4d4d8 !important}"
                 "::-webkit-scrollbar-thumb{background:#059669 !important;border-radius:11px;border:4px solid #d4d4d8 !important;min-height:70px}"
