@@ -4308,7 +4308,12 @@ def render_hidden_tools():
                 "[data-stale='true'],[data-stale='true'] *{opacity:1 !important;filter:none !important;transition:none !important}"
                 "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
                 "[data-testid='stHeader']{background:transparent !important}"
-                "iframe{background:#f4f4f5}</style>", unsafe_allow_html=True)
+                "iframe{background:#f4f4f5}"
+                "html,body,[data-testid='stMain'],section.main,[data-testid='stAppViewContainer']{scrollbar-width:auto !important;scrollbar-color:#059669 #d4d4d8 !important}"
+                "::-webkit-scrollbar{width:22px !important;height:22px !important}"
+                "::-webkit-scrollbar-track{background:#d4d4d8 !important}"
+                "::-webkit-scrollbar-thumb{background:#059669 !important;border-radius:11px;border:4px solid #d4d4d8 !important;min-height:70px}"
+                "::-webkit-scrollbar-thumb:hover{background:#047857 !important}</style>", unsafe_allow_html=True)
     st.markdown("<style>.st-key-oz_hidden_tools{position:fixed !important;left:-10000px !important;top:0 !important;"
                 "width:1px !important;height:1px !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}"
                 "</style>", unsafe_allow_html=True)
