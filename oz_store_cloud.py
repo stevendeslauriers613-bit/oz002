@@ -3306,6 +3306,7 @@ HTML_CODE = r"""<!DOCTYPE html>
       var top = fe.getBoundingClientRect().top;
       var h = Math.max(320, Math.floor(p.innerHeight - top - 2));
       if (Math.abs((parseInt(fe.style.height) || 0) - h) > 2) fe.style.height = h + 'px';
+      d.documentElement.classList.add('oz-locked');
     }catch(e){}
   }
   window.addEventListener('pagehide', function(){
@@ -3975,9 +3976,10 @@ def apply_global_css():
 
 def lock_page_scroll():
     """Once signed in, only the app window scrolls: every layer around it is locked."""
-    st.markdown("<style>html,body,.stApp,[data-testid='stApp'],[data-testid='stAppViewContainer'],[data-testid='stMain'],"
-                "section.main,[data-testid='stMainBlockContainer'],.block-container{overflow:hidden !important}</style>",
-                unsafe_allow_html=True)
+    sels = ["html.oz-locked", "html.oz-locked body", "html.oz-locked .stApp", "html.oz-locked [data-testid='stApp']",
+            "html.oz-locked [data-testid='stAppViewContainer']", "html.oz-locked [data-testid='stMain']",
+            "html.oz-locked section.main", "html.oz-locked [data-testid='stMainBlockContainer']", "html.oz-locked .block-container"]
+    st.markdown("<style>" + ",".join(sels) + "{overflow:hidden !important}</style>", unsafe_allow_html=True)
 
 
 init_db()
@@ -4477,7 +4479,7 @@ if _flash:
 
 lock_page_scroll()
 render_hidden_tools()
-components.html(build_html_page(), height=900, scrolling=False)
+components.html(build_html_page(), height=600, scrolling=False)
 
 _keep = st.session_state.get("flash_keep")
 if _keep:
