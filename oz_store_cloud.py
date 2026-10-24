@@ -54,6 +54,7 @@ def save_state(dbx, state):
         st.warning("Dropbox not connected — data will not be saved.")
         return False
     try:
+        import dropbox
         path = f"{DROPBOX_FOLDER}/{STATE_FILE}"
         data = json.dumps(state, indent=2).encode("utf-8")
         dbx.files_upload(data, path, mode=dropbox.files.WriteMode.overwrite)
@@ -67,6 +68,7 @@ def upload_file_to_dropbox(dbx, filename, file_bytes):
     if not dbx:
         return None
     try:
+        import dropbox
         path = f"{DROPBOX_FOLDER}/{filename}"
         dbx.files_upload(file_bytes, path, mode=dropbox.files.WriteMode.overwrite)
         return path
@@ -88,7 +90,7 @@ if "logged_in" not in st.session_state:
 if "store_state" not in st.session_state:
     st.session_state.store_state = {}
 
-# --- Simple local users (you can later move these to Dropbox too) ---
+# --- Simple local users ---
 USERS = {
     "admin": {"name": "Master Admin", "role": "admin", "password": "admin2026"},
     "leanne": {"name": "Leanne (Accountant)", "role": "accountant", "password": "leanne2026"},
@@ -150,7 +152,6 @@ YEARS = ["2025", "2026", "2027", "2028"]
 
 col_s, col_m, col_y = st.columns(3)
 with col_s:
-    # Store managers only see their own store
     if st.session_state.role == "store":
         active_store = st.session_state.name
         st.markdown(f"**Store:** {active_store}")
@@ -171,6 +172,7 @@ if spk not in st.session_state.store_state:
         "cooh_date": "",
         "chargebacks_text": "Nothing to report.",
         "checklist": {},
+        "notes": {},
         "expenses": {
             "rent": "2000.00", "salaries": "1950.00", "utilities": "1200.00",
             "advertising": "1000.00", "marketing": "800.00", "datadeals": "1500.00",
@@ -190,7 +192,6 @@ uploaded_csv = st.file_uploader("Upload raw monthly CSV", type=["csv"], key=f"cs
 if uploaded_csv is not None:
     try:
         df = pd.read_csv(uploaded_csv)
-        # Basic processing: keep parent rows, sort by preferred order
         ACCOUNTANT_ORDER = [
             "Beverages", "Dried Flower", "Edibles", "Extracts Ingested", "Extracts Inhaled",
             "Infused Pre-Rolls ", "Milled Flower", "Pre-Rolls", "Seeds", "Topicals",
@@ -199,7 +200,6 @@ if uploaded_csv is not None:
         ]
         if "Category" in df.columns:
             df = df[~df["Category"].astype(str).str.startswith(">")]
-            # Reorder roughly by ACCOUNTANT_ORDER if possible
             order_map = {cat: i for i, cat in enumerate(ACCOUNTANT_ORDER)}
             df["_order"] = df["Category"].map(lambda x: order_map.get(str(x).strip(), 999))
             df = df.sort_values("_order").drop(columns=["_order"])
@@ -231,15 +231,15 @@ checklist_items = [
 
 if "checklist" not in period_data:
     period_data["checklist"] = {}
+if "notes" not in period_data:
+    period_data["notes"] = {}
 
 cols = st.columns(2)
 for i, (key, label) in enumerate(checklist_items):
     with cols[i % 2]:
         checked = st.checkbox(label, value=period_data["checklist"].get(key, False), key=f"chk_{spk}_{key}")
         period_data["checklist"][key] = checked
-        note = st.text_input(f"Notes for {label}", value=period_data.get("notes", {}).get(key, ""), key=f"note_{spk}_{key}")
-        if "notes" not in period_data:
-            period_data["notes"] = {}
+        note = st.text_input(f"Notes for {label}", value=period_data["notes"].get(key, ""), key=f"note_{spk}_{key}")
         period_data["notes"][key] = note
 
 # Cash on Hand
@@ -248,9 +248,10 @@ c1, c2 = st.columns(2)
 with c1:
     period_data["cooh_text"] = st.text_input("Amount", value=period_data.get("cooh_text", ""), key=f"cooh_{spk}")
 with c2:
-    period_data["cooh_date"] = st.date_input("Date", value=None, key=f"coohdate_{spk}")
-    if period_data["cooh_date"]:
-        period_data["cooh_date"] = str(period_data["cooh_date"])
+    date_val = period_data.get("cooh_date")
+    parsed_date = datetime.strptime(date_val, "%Y-%m-%d").date() if date_val else None
+    new_date = st.date_input("Date", value=parsed_date, key=f"coohdate_{spk}")
+    period_data["cooh_date"] = str(new_date) if new_date else ""
 
 period_data["chargebacks_text"] = st.text_input("Moneris Chargebacks", value=period_data.get("chargebacks_text", "Nothing to report."), key=f"cb_{spk}")
 
@@ -271,11 +272,9 @@ for cat in file_categories:
                 if path:
                     if cat not in period_data["files"]:
                         period_data["files"][cat] = []
-                    # Avoid duplicates
                     if not any(x.get("filename") == f.name for x in period_data["files"][cat]):
                         period_data["files"][cat].append({"filename": f.name, "dropbox_path": path})
                     st.success(f"Uploaded {f.name}")
-        # Show existing files
         existing = period_data["files"].get(cat, [])
         if existing:
             st.write("Uploaded:")
@@ -318,7 +317,7 @@ if st.button("💾 Save All to Cloud", type="primary"):
     else:
         st.error("Save failed. Check Dropbox connection.")
 
-# --- Accountant / Admin view of all stores (simple) ---
+# --- Accountant / Admin view ---
 if st.session_state.role in ("admin", "accountant"):
     st.divider()
     st.subheader("All Stores Status")
