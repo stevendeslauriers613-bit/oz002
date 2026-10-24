@@ -3317,7 +3317,9 @@ HTML_CODE = r"""<!DOCTYPE html>
       while (el && n < 4){
         var tid = el.getAttribute('data-testid') || '';
         if (tid === 'stVerticalBlock' || tid === 'stMainBlockContainer' || tid === 'stMain' || el.tagName === 'BODY') break;
+        // Streamlit sizes this box with flex-basis ("flex: 0 0 <height>px"), which wins over height, so set both.
         if (el.style.height !== px) el.style.height = px;
+        if (el.style.flex !== '0 0 ' + px) el.style.flex = '0 0 ' + px;
         el.style.minHeight = '0'; el.style.maxHeight = 'none'; el.style.overflow = 'visible';
         if (tid === 'stElementContainer' || (el.classList && el.classList.contains('element-container'))) break;
         el = el.parentElement; n++;
