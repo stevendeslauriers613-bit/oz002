@@ -1234,4 +1234,347 @@ html_code = """
                 chargebacks_text: notes['chargebacks'],
                 checklist_json: checklistData,
                 inventory_data: inv ? { headers: inv.headers, rows: inv.rows } : null,
-                inventory_filename:
+                inventory_filename: inv ? inv.fileName : ""
+            };
+
+            try {
+                localStorage.setItem('oz_data_' + spk, JSON.stringify(persistentStoreData[spk]));
+            } catch(e) {}
+
+            fetch('/api/save_checklist', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    store_period_key: spk,
+                    cooh_text: notes['cooh'],
+                    cooh_date: dates['cooh'],
+                    chargebacks_text: notes['chargebacks'],
+                    checklist_json: checklistData
+                })
+            }).catch(err => console.error('Save checklist error:', err));
+
+            if (inv) {
+                fetch('/api/save_inventory', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        store_period_key: spk,
+                        inventory_json: { headers: inv.headers, rows: inv.rows },
+                        inventory_filename: inv.fileName
+                    })
+                }).catch(err => console.error('Save inventory error:', err));
+            }
+
+            const badge = document.getElementById('store-completion-badge');
+            if (badge) {
+                const checked = Object.values(checkboxes).filter(Boolean).length;
+                badge.textContent = isSilent ? `✓ Saved | Checklist: ${checked}/10` : `Saved Successfully! Checklist: ${checked}/10`;
+                setTimeout(() => {
+                    badge.textContent = `Checklist: ${checked}/10 Completed`;
+                }, 2000);
+            }
+        }
+
+        function updateCompletionBadge() {
+            const checkboxes = ['brinks', 'green1', 'green2', 'green3', 'mon1', 'mon2', 'ocs1', 'ocs2', 'gas1', 'gas2'];
+            let checked = 0;
+            checkboxes.forEach(key => {
+                const chk = document.getElementById(`${key}-chk`);
+                if (chk && chk.checked) {
+                    checked++;
+                    const statusEl = document.getElementById(`status-${key}`);
+                    if(statusEl) {
+                        statusEl.textContent = "Complete ✓";
+                        statusEl.className = "bg-emerald-800 text-emerald-200 px-2 py-0.5 rounded text-[11px]";
+                    }
+                } else {
+                    const statusEl = document.getElementById(`status-${key}`);
+                    if(statusEl) {
+                        statusEl.textContent = "Pending";
+                        statusEl.className = "bg-emerald-900 text-emerald-300/60 px-2 py-0.5 rounded text-[11px]";
+                    }
+                }
+            });
+
+            const badge = document.getElementById('store-completion-badge');
+            if (badge) badge.textContent = `Checklist: ${checked}/10 Completed`;
+
+            const portalChk = document.getElementById('portal-chk-val');
+            if (portalChk) portalChk.textContent = `${checked} / 10 Items Checked`;
+
+            const coohDate = document.getElementById('cooh-date')?.value;
+            const brinksDate = document.getElementById('brinks-date')?.value;
+            if(document.getElementById('portal-date-cooh')) document.getElementById('portal-date-cooh').textContent = coohDate || 'No date';
+            if(document.getElementById('portal-date-brinks')) document.getElementById('portal-date-brinks').textContent = brinksDate || 'No date';
+        }
+
+        function handleItemFiles(cat, inputElem) {
+            if (inputElem.files && inputElem.files.length > 0) {
+                const spk = getSPK();
+                if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
+                if (!storedFilesMap[spk][cat]) storedFilesMap[spk][cat] = [];
+
+                Array.from(inputElem.files).forEach((file, idx) => {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const base64Data = btoa(new Uint8Array(e.target.result).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+                        fetch('/api/upload_file', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                store_period_key: spk,
+                                category: cat,
+                                filename: file.name,
+                                file_data: base64Data
+                            })
+                        })
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.success) {
+                                if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
+                                if (!storedFilesMap[spk][cat]) storedFilesMap[spk][cat] = [];
+                                storedFilesMap[spk][cat].push({ id: data.id, filename: file.name });
+                                renderStoredFiles();
+                                scheduleAutoSave();
+                            }
+                        })
+                        .catch(err => console.error('Upload error:', err));
+                    };
+                    reader.readAsArrayBuffer(file);
+                });
+                inputElem.value = '';
+            }
+        }
+
+        function handleRemoveFile(cat, fileId) {
+            const spk = getSPK();
+            if (storedFilesMap[spk] && storedFilesMap[spk][cat]) {
+                storedFilesMap[spk][cat] = storedFilesMap[spk][cat].filter(f => f.id !== fileId);
+                if (Number.isInteger(fileId)) {
+                    fetch(`/api/delete_file?id=${fileId}`, { method: 'POST' })
+                        .catch(err => console.error('Delete error:', err));
+                }
+                renderStoredFiles();
+                scheduleAutoSave();
+            }
+        }
+
+        function clearUploadField(cat) {
+            if (confirm(`Clear all files for this category?`)) {
+                const spk = getSPK();
+                if (storedFilesMap[spk]) {
+                    storedFilesMap[spk][cat] = [];
+                }
+                renderStoredFiles();
+                scheduleAutoSave();
+            }
+        }
+
+        function renderStoredFiles() {
+            const spk = getSPK();
+            const cats = ['cooh', 'brinks', 'green1', 'green2', 'green3', 'mon1', 'mon2', 'ocs1', 'ocs2', 'chargebacks', 'gas1', 'gas2'];
+
+            cats.forEach(cat => {
+                const box = document.getElementById(`files-${cat}`);
+                const tableBox = document.getElementById(`table-files-${cat}`);
+                if (!box) return;
+
+                const fileList = (storedFilesMap[spk] && storedFilesMap[spk][cat]) ? storedFilesMap[spk][cat] : [];
+
+                if (fileList.length > 0) {
+                    let html = fileList.map(f => {
+                        let chip = `<span class="inline-block bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
+                        chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-600 font-bold ml-1 hover:text-red-800">×</button>`;
+                        if (Number.isInteger(f.id)) {
+                            chip += ` <button type="button" onclick="window.location.href='/api/download_file?id=${f.id}'" class="text-blue-600 font-bold ml-1 hover:text-blue-800" title="Download">⬇</button>`;
+                        }
+                        chip += `</span>`;
+                        return chip;
+                    }).join('');
+                    box.innerHTML = html;
+                    if (tableBox) {
+                        tableBox.innerHTML = fileList.map(f => {
+                            let chip = `<span class="inline-block bg-emerald-800 text-emerald-200 px-1.5 py-0.5 rounded mr-1 mb-1 font-medium">📎 ${f.filename}`;
+                            chip += ` <button type="button" onclick="handleRemoveFile('${cat}', ${f.id})" class="text-red-400 font-bold ml-1 hover:text-red-300">×</button>`;
+                            if (Number.isInteger(f.id)) {
+                                chip += ` <button type="button" onclick="window.location.href='/api/download_file?id=${f.id}'" class="text-blue-300 font-bold ml-1 hover:text-blue-200" title="Download">⬇</button>`;
+                            }
+                            chip += `</span>`;
+                            return chip;
+                        }).join('');
+                    }
+                } else {
+                    box.innerHTML = '<span class="text-zinc-400 italic">No files uploaded</span>';
+                    if (tableBox) tableBox.innerHTML = '<span class="text-emerald-300/50 italic">No files attached</span>';
+                }
+            });
+        }
+
+        function downloadMasterZip() {
+            const spk = getSPK();
+            const cats = ['cooh', 'brinks', 'green1', 'green2', 'green3', 'mon1', 'mon2', 'ocs1', 'ocs2', 'chargebacks', 'gas1', 'gas2'];
+            const zip = new JSZip();
+            let fileCount = 0;
+
+            cats.forEach(cat => {
+                const fileList = (storedFilesMap[spk] && storedFilesMap[spk][cat]) ? storedFilesMap[spk][cat] : [];
+                if (fileList.length > 0) {
+                    const folder = zip.folder(cat);
+                    fileList.forEach(f => {
+                        folder.file(f.filename, `Simulated content for ${f.filename}`);
+                        fileCount++;
+                    });
+                }
+            });
+
+            if (fileCount === 0) {
+                alert('No files uploaded for this period yet.');
+                return;
+            }
+
+            zip.generateAsync({type: 'blob'}).then(function(content) {
+                saveAs(content, `${activeStore}_${selectedMonth}_${selectedYear}_Package.zip`);
+            });
+        }
+
+        function openAddUserModal() {
+            document.getElementById('edit-form-title').textContent = "Add New User Credential";
+            document.getElementById('edit-orig-username').value = "";
+            document.getElementById('edit-username').value = "";
+            document.getElementById('edit-name').value = "";
+            document.getElementById('edit-role').value = "store";
+            document.getElementById('edit-password').value = "";
+            document.getElementById('user-edit-form-box').classList.remove('hidden');
+        }
+
+        function editUser(username, name, role, password) {
+            document.getElementById('edit-form-title').textContent = `Edit User: ${username}`;
+            document.getElementById('edit-orig-username').value = username;
+            document.getElementById('edit-username').value = username;
+            document.getElementById('edit-name').value = name;
+            document.getElementById('edit-role').value = role;
+            document.getElementById('edit-password').value = password;
+            document.getElementById('user-edit-form-box').classList.remove('hidden');
+        }
+
+        function submitUserEdit(event) {
+            event.preventDefault();
+            const orig = document.getElementById('edit-orig-username').value;
+            const user = document.getElementById('edit-username').value;
+            const name = document.getElementById('edit-name').value;
+            const role = document.getElementById('edit-role').value;
+            const pass = document.getElementById('edit-password').value;
+
+            window.location.href = `?action=update_user&orig_username=${orig}&username=${user}&name=${encodeURIComponent(name)}&role=${role}&password=${encodeURIComponent(pass)}`;
+        }
+
+        function deleteUser(username) {
+            if (confirm(`Are you sure you want to delete user "${username}"?`)) {
+                window.location.href = `?action=delete_user&username=${username}`;
+            }
+        }
+
+        function updateFinancialSummary() {
+            try {
+                const spk = getSPK();
+                const inv = storeInventoryData[spk];
+                let totalSales = 0;
+                let totalCogs = 0;
+
+                if (inv && inv.rows && inv.headers) {
+                    const soldHeader = inv.headers.find(h => h && h.toLowerCase().includes('sold'));
+                    const costHeader = inv.headers.find(h => h && (h.toLowerCase().includes('cost') || h.toLowerCase().includes('avg cost')));
+
+                    inv.rows.forEach(row => {
+                        let soldVal = 0;
+                        if (soldHeader && row[soldHeader] !== undefined) {
+                            soldVal = parseFloat(String(row[soldHeader]).replace(/[^0-9.-]/g, '')) || 0;
+                        } else {
+                            const keys = Object.keys(row).filter(k => k !== 'Category');
+                            if (keys.length > 0) soldVal = parseFloat(String(row[keys[0]]).replace(/[^0-9.-]/g, '')) || 0;
+                        }
+                        totalSales += soldVal;
+
+                        if (costHeader && row[costHeader] !== undefined) {
+                            const costVal = parseFloat(String(row[costHeader]).replace(/[^0-9.-]/g, '')) || 0;
+                            totalCogs += costVal;
+                        }
+                    });
+                }
+
+                if (totalCogs === 0 && totalSales > 0) {
+                    totalCogs = totalSales * 0.80; // Estimated wholesale cost based on OCS wholesale ratios
+                }
+
+                const parseNum = (id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return 0;
+                    return parseFloat(String(el.value).replace(/[^0-9.-]/g, '')) || 0;
+                };
+
+                const expRent = parseNum('exp-rent');
+                const expSal = parseNum('exp-salaries');
+                const expUtil = parseNum('exp-utilities');
+                const expAdv = parseNum('exp-advertising');
+                const expMkt = parseNum('exp-marketing');
+                const expData = parseNum('exp-datadeals');
+                const expIns = parseNum('exp-insurance');
+                const expGar = parseNum('exp-garbage');
+                const expSec = parseNum('exp-security');
+                const expLic = parseNum('exp-licenses');
+
+                const totalExp = expRent + expSal + expUtil + expAdv + expMkt + expData + expIns + expGar + expSec + expLic;
+
+                const grossProfit = totalSales - totalCogs;
+                const grossMargin = totalSales > 0 ? (grossProfit / totalSales) * 100 : 0;
+
+                const netOperatingIncome = grossProfit - totalExp;
+                const operatingMargin = totalSales > 0 ? (netOperatingIncome / totalSales) * 100 : 0;
+
+                const formatMoney = (n) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const formatPct = (n) => n.toFixed(1) + '%';
+
+                const salesEl = document.getElementById('fin-total-sales');
+                const cogsEl = document.getElementById('fin-cogs');
+                const grossMEl = document.getElementById('fin-gross-margin');
+                const netEl = document.getElementById('fin-net');
+                const netMEl = document.getElementById('fin-net-margin');
+                const totExpEl = document.getElementById('fin-total-expenses');
+
+                if (salesEl) salesEl.textContent = formatMoney(totalSales);
+                if (cogsEl) cogsEl.textContent = formatMoney(totalCogs);
+                if (grossMEl) grossMEl.textContent = 'Gross Margin: ' + formatPct(grossMargin);
+                if (netEl) {
+                    netEl.textContent = formatMoney(netOperatingIncome);
+                    netEl.className = netOperatingIncome >= 0 ? 'text-lg font-bold text-white' : 'text-lg font-bold text-red-300';
+                }
+                if (netMEl) {
+                    netMEl.textContent = formatPct(operatingMargin);
+                    netMEl.className = operatingMargin >= 0 ? 'text-lg font-bold text-amber-300' : 'text-lg font-bold text-red-300';
+                }
+                if (totExpEl) totExpEl.textContent = formatMoney(totalExp);
+            } catch(e) {
+                console.error("updateFinancialSummary error:", e);
+            }
+        }
+
+        initApp();
+    </script>
+</body>
+</html>
+"""
+
+# Safe string replacement for variables
+final_html = (
+    html_code.replace("REPLACE_CURRENT_NAME", current_name)
+    .replace("REPLACE_CURRENT_ROLE", current_role)
+    .replace("REPLACE_ADMIN_HIDDEN_CLASS", admin_hidden_class)
+    .replace("REPLACE_CRED_TABLE_ROWS", cred_table_rows)
+    .replace("REPLACE_ACCOUNTANT_HIDDEN_CLASS", accountant_hidden_class)
+    .replace("REPLACE_ADD_USER_BTN_HTML", add_user_btn_html)
+    .replace("REPLACE_IS_STORE_MANAGER", is_store_manager)
+    .replace("REPLACE_FILES_JSON", files_json)
+    .replace("REPLACE_STORE_DATA_JSON", store_data_json)
+)
+
+components.html(final_html, height=3000, scrolling=True)
