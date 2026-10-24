@@ -1493,7 +1493,7 @@ HTML_CODE = r"""<!DOCTYPE html>
         <div class="p-6 md:p-8">
 
             <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 pb-4 border-b border-zinc-200">
-                <div class="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin w-full md:w-auto" id="store-tabs"></div>
+                <div class="flex items-center gap-2 overflow-x-auto overflow-y-hidden pb-2 scrollbar-thin w-full md:w-auto" id="store-tabs"></div>
                 <div class="flex items-center gap-3">
                     REPLACE_ADD_USER_BTN_HTML
                     <div class="text-xs text-zinc-500 font-medium bg-zinc-50 px-3 py-1.5 rounded-lg border border-zinc-200">
@@ -2358,7 +2358,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                     </div>
                 </div>
 
-                <div class="bg-emerald-900/40 rounded-xl border border-emerald-800 overflow-x-auto">
+                <div class="bg-emerald-900/40 rounded-xl border border-emerald-800 overflow-x-auto overflow-y-hidden">
                     <table class="w-full text-left border-collapse text-xs">
                         <thead class="bg-emerald-900 text-emerald-300 border-b border-emerald-800 sticky top-0">
                             <tr>
@@ -3028,7 +3028,7 @@ HTML_CODE = r"""<!DOCTYPE html>
             const extra = (docFacts && docFacts.extra) ? docFacts.extra : [];
             const errHtml = (docFacts && docFacts.error) ? '<p class="text-xs text-red-300 font-bold mb-2">Problem reading your documents: ' + esc(docFacts.error) + '</p>' : '';
             box.innerHTML = errHtml + '<h5 class="text-sm font-bold text-emerald-300 mb-3">Figures read from your uploaded documents</h5>' +
-                '<div class="overflow-x-auto rounded-lg border border-emerald-800"><table class="w-full text-left text-xs text-emerald-100">' +
+                '<div class="overflow-x-auto overflow-y-hidden rounded-lg border border-emerald-800"><table class="w-full text-left text-xs text-emerald-100">' +
                 '<thead class="bg-emerald-800/60 text-emerald-300"><tr><th class="p-2">Document</th><th class="p-2">File</th><th class="p-2">What was read</th></tr></thead><tbody>' +
                 docs.map(d => '<tr class="border-t border-emerald-800 align-top"><td class="p-2 font-medium text-white">' + esc(d.label) + '</td><td class="p-2">' + esc(d.file) + '</td><td class="p-2">' + result(d) + '</td></tr>').join('') +
                 '</tbody></table></div>' +
@@ -3347,6 +3347,7 @@ HTML_CODE = r"""<!DOCTYPE html>
   window.addEventListener('resize', fit);
   try { new ResizeObserver(fit).observe(document.body); } catch(e) {}
   setInterval(fit, 700);
+  [300, 1000, 2500].forEach(function(t){ setTimeout(tidy, t); });
   fit();
 })();
 </script></body>
