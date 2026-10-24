@@ -43,6 +43,8 @@ EXPENSE_FIELDS = [
     ("licenses", "Licenses & Compliance"),
 ]
 
+DOC_NAME = dict(CHECKLIST_ITEMS)
+
 # Columns that must never be turned into numbers (IDs, SKUs, names...)
 _TEXT_COLS = re.compile(
     r"\b(id|sku|upc|barcode|name|product|description|category|brand|supplier|vendor|store|date|code|plu)\b",
@@ -211,6 +213,92 @@ def clean_inventory(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
 
 # --------------------------------------------------------------------------
+# Totals read from uploaded documents (Greenline, Moneris, OCS, gas cards)
+# --------------------------------------------------------------------------
+FACT_COLS = {
+    "green2": ["net sales", "total net sales", "total sales", "gross sales", "sales", "total"],
+    "green3": ["total", "total amount", "amount"],
+    "mon1": ["net sales", "total sales", "sales", "amount", "total"],
+    "mon2": ["net sales", "total sales", "sales", "amount", "total"],
+    "ocs2": ["invoice total", "total", "net amount", "amount", "subtotal"],
+    "gas1": ["total", "amount", "cost"],
+    "gas2": ["total", "amount", "cost"],
+}
+_TOTAL_ROW = re.compile(r"^\s*(grand\s+)?(sub)?totals?\b", re.I)
+
+
+def _first_text_col(df: pd.DataFrame):
+    for c in df.columns:
+        if not pd.api.types.is_numeric_dtype(df[c]):
+            return c
+    return None
+
+
+def extract_total(cat: str, df: pd.DataFrame):
+    """Find the one number that matters in a document: -> {col, total, rows} or None."""
+    prefs = FACT_COLS.get(cat)
+    if not prefs or df is None or df.empty:
+        return None
+    df = df.dropna(how="all").reset_index(drop=True)
+    cols = {str(c).strip().casefold(): c for c in df.columns}
+    label_col = _first_text_col(df)
+    labels = df[label_col].astype(str) if label_col is not None else None
+    total_rows = labels.str.match(_TOTAL_ROW) if labels is not None else None
+    nums = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_bool_dtype(df[c])]
+
+    def pick():
+        for p in prefs:                       # exact header match first
+            c = cols.get(p)
+            if c is not None and c in nums:
+                return c
+        for p in prefs:                       # then "contains"
+            for key, c in cols.items():
+                if p in key and c in nums:
+                    return c
+        return None
+
+    col = pick()
+    if col is not None:
+        s_ = df[col]
+        if total_rows is not None and total_rows.any():
+            v = s_[total_rows].dropna()
+            total = float(v.iloc[-1]) if len(v) else float(s_[~total_rows].sum(skipna=True))
+            rows = int((~total_rows).sum())
+        else:
+            total, rows = float(s_.sum(skipna=True)), int(s_.notna().sum())
+        return {"col": str(col), "total": total, "rows": rows}
+
+    # label / value layout, e.g. "Net Sales | 12,345.67"
+    if label_col is not None:
+        for p in prefs:
+            hit = labels.str.strip().str.casefold() == p
+            if hit.any():
+                row = df[hit].iloc[0]
+                for c in df.columns:
+                    if c == label_col:
+                        continue
+                    v = parse_money(row[c])
+                    if v:
+                        return {"col": str(row[label_col]).strip(), "total": v, "rows": 1}
+    return None
+
+
+def summarize_facts(facts: list) -> dict:
+    """facts: [{cat, file, col, total, rows}] -> the figures the financial summary uses."""
+    def tot(*cats):
+        return sum(f["total"] for f in facts if f["cat"] in cats)
+    green2, mon, ocs = tot("green2"), tot("mon1", "mon2"), tot("ocs2")
+    out = {"sales": 0.0, "sales_src": "", "cogs": 0.0, "cogs_src": ""}
+    if green2 > 0:
+        out["sales"], out["sales_src"] = green2, "Greenline: Financials"
+    elif mon > 0:
+        out["sales"], out["sales_src"] = mon, "Moneris sales reports"
+    if ocs > 0:
+        out["cogs"], out["cogs_src"] = ocs, "OCS invoices"
+    return out
+
+
+# --------------------------------------------------------------------------
 # Excel styling helpers
 # --------------------------------------------------------------------------
 _FONT = "Arial"
@@ -344,25 +432,33 @@ def _num(v) -> float:
 
 
 def financials(payload: dict) -> dict:
-    """Same maths as the on-screen Financial Summary (sales = 'sold' column, COGS = 'cost' column, 80% fallback)."""
+    """Sales: Greenline Financials > Moneris > inventory 'sold'. COGS: inventory cost > OCS invoices > 80% estimate."""
     rows = payload.get("inventory_data") or []
-    sales = cogs = 0.0
+    inv_sales = inv_cogs = 0.0
     if rows:
         headers = list(rows[0].keys())
         sold_h = next((h for h in headers if h and "sold" in str(h).lower()), None)
         cost_h = next((h for h in headers if h and "cost" in str(h).lower()), None)
         for r in rows:
             if sold_h and r.get(sold_h) is not None:
-                sales += _num(r.get(sold_h))
+                inv_sales += _num(r.get(sold_h))
             else:
                 keys = [k for k in r if k != "Category"]
                 if keys:
-                    sales += _num(r.get(keys[0]))
+                    inv_sales += _num(r.get(keys[0]))
             if cost_h and r.get(cost_h) is not None:
-                cogs += _num(r.get(cost_h))
+                inv_cogs += _num(r.get(cost_h))
+    doc = summarize_facts(payload.get("doc_facts") or [])
+    if doc["sales"] > 0:
+        sales, sales_src = doc["sales"], doc["sales_src"]
+    else:
+        sales, sales_src = inv_sales, ("Inventory 'sold' column" if inv_sales > 0 else "")
+    cogs, cogs_src = inv_cogs, ("Inventory cost column" if inv_cogs > 0 else "")
+    if cogs == 0 and doc["cogs"] > 0:
+        cogs, cogs_src = doc["cogs"], doc["cogs_src"]
     estimated = False
     if cogs == 0 and sales > 0:
-        cogs, estimated = sales * 0.80, True
+        cogs, estimated, cogs_src = sales * 0.80, True, "Estimated at 80% of sales"
     gross = sales - cogs
     exp = total_expenses(payload)
     noi = gross - exp
@@ -370,7 +466,7 @@ def financials(payload: dict) -> dict:
         "sales": sales, "cogs": cogs, "gross": gross, "expenses": exp, "noi": noi,
         "gross_margin": (gross / sales * 100) if sales > 0 else 0.0,
         "op_margin": (noi / sales * 100) if sales > 0 else 0.0,
-        "cogs_estimated": estimated,
+        "cogs_estimated": estimated, "sales_src": sales_src, "cogs_src": cogs_src,
     }
 
 
@@ -439,14 +535,20 @@ def build_store_workbook(
     fin = financials(payload)
     if fin["sales"] > 0:
         r = _block(ws, r, "Financial summary", ["Measure", "Value"], [
-            ["Total sales (inventory 'sold' column)", fin["sales"]],
-            ["Cost of goods sold" + (" (estimated at 80%)" if fin["cogs_estimated"] else ""), fin["cogs"]],
+            [f"Total sales - {fin['sales_src']}", fin["sales"]],
+            [f"Cost of goods sold - {fin['cogs_src']}", fin["cogs"]],
             ["Gross profit", fin["gross"]],
             ["Gross margin %", round(fin["gross_margin"], 1)],
             ["Operating expenses", fin["expenses"]],
             ["Net operating income", fin["noi"]],
             ["Operating margin %", round(fin["op_margin"], 1)],
         ])
+
+    facts = payload.get("doc_facts") or []
+    if facts:
+        r = _block(ws, r, "Figures read from uploaded documents",
+                   ["Document", "File", "Column / line used", "Rows", "Total"],
+                   [[DOC_NAME.get(f["cat"], f["cat"]), f["file"], f["col"], f["rows"], f["total"]] for f in facts])
 
     inv = _inventory_frame(payload)
     if inv is not None:
@@ -563,6 +665,207 @@ def build_zip(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 # ==========================================================================
+
+
+# ==========================================================================
+# OWNER REPORT: one readable page with charts (opens in any browser, prints to PDF)
+# ==========================================================================
+import html as _html
+
+
+def _e(x) -> str:
+    return _html.escape(str(x if x is not None else ""), quote=True)
+
+
+def _m(x: float, cents: bool = False) -> str:
+    x = float(x or 0)
+    s = f"{abs(x):,.2f}" if cents else f"{abs(x):,.0f}"
+    return ("-$" if x < 0 else "$") + s
+
+
+def _pct(x: float) -> str:
+    return f"{x:.1f}%"
+
+
+def _category_sales(payload: dict) -> list[tuple[str, float]]:
+    rows = payload.get("inventory_data") or []
+    if not rows:
+        return []
+    headers = list(rows[0].keys())
+    sold_h = next((h for h in headers if h and "sold" in str(h).lower()), None)
+    if not sold_h:
+        return []
+    out = [(str(r.get("Category", "")).strip(), _num(r.get(sold_h))) for r in rows]
+    return sorted([(c, v) for c, v in out if c and v > 0], key=lambda t: -t[1])
+
+
+_DONUT_COLORS = ["#065f46", "#10b981", "#34d399", "#f59e0b", "#6366f1", "#ec4899", "#94a3b8"]
+
+
+def _donut(parts: list[tuple[str, float]]) -> str:
+    total = sum(v for _, v in parts) or 1
+    circles, offset = [], 0.0
+    for i, (_, v) in enumerate(parts):
+        p = v / total * 100
+        circles.append(
+            f'<circle cx="21" cy="21" r="15.9155" fill="none" stroke="{_DONUT_COLORS[i % len(_DONUT_COLORS)]}" '
+            f'stroke-width="6" stroke-dasharray="{p:.3f} {100 - p:.3f}" stroke-dashoffset="{-offset:.3f}" '
+            f'transform="rotate(-90 21 21)"/>'
+        )
+        offset += p
+    return ('<svg viewBox="0 0 42 42" width="170" height="170" role="img" aria-label="Expense breakdown">'
+            '<circle cx="21" cy="21" r="15.9155" fill="none" stroke="#e5e7eb" stroke-width="6"/>'
+            + "".join(circles) + "</svg>")
+
+
+def build_owner_report_html(store: str, period: str, payload: dict) -> str:
+    fin = financials(payload)
+    sales, cogs, gross, exp, noi = fin["sales"], fin["cogs"], fin["gross"], fin["expenses"], fin["noi"]
+    facts = payload.get("doc_facts") or []
+    exp_map = payload.get("expenses") or {}
+    exp_items = sorted([(label, parse_money(exp_map.get(k))) for k, label in EXPENSE_FIELDS], key=lambda t: -t[1])
+    exp_items = [t for t in exp_items if t[1] > 0]
+    cats = _category_sales(payload)
+    missing = missing_docs(payload)
+    done = len(CHECKLIST_ITEMS) - len(missing)
+    cooh = str(payload.get("cooh_text", "")).strip()
+    chargebacks = payload.get("chargebacks_text") or "Nothing to report."
+
+    # ---- plain-language summary
+    if sales > 0:
+        verdict = "made a profit of" if noi >= 0 else "ran at a loss of"
+        story = (f"{store} sold <b>{_m(sales)}</b> in {_e(period)}. The products it sold cost about <b>{_m(cogs)}</b>, "
+                 f"leaving a gross profit of <b>{_m(gross)}</b> ({_pct(fin['gross_margin'])}). After <b>{_m(exp)}</b> of "
+                 f"operating expenses the store {verdict} <b>{_m(abs(noi))}</b> ({_pct(abs(fin['op_margin']))} of sales).")
+    else:
+        story = ("No sales figures have been uploaded yet for this month. Upload the Greenline financials or the "
+                 "inventory report and this page fills in automatically.")
+    if exp_items and exp > 0:
+        top = exp_items[0]
+        story += f" The biggest expense was <b>{_e(top[0])}</b> at {_m(top[1])} ({top[1] / exp * 100:.0f}% of expenses)."
+    notes = []
+    if fin["cogs_estimated"]:
+        notes.append("Cost of goods sold is an estimate (80% of sales) because no product cost was found in the uploads.")
+    if missing:
+        notes.append(f"{len(missing)} document(s) still missing: " + ", ".join(missing) + ".")
+
+    # ---- where every sales dollar went (stacked bar)
+    bar = ""
+    if sales > 0:
+        c_pct = min(cogs / sales * 100, 100)
+        e_pct = min(exp / sales * 100, 100 - c_pct)
+        p_pct = max(0.0, 100 - c_pct - e_pct)
+        bar = f"""
+        <div class="stack" role="img" aria-label="Split of each sales dollar">
+          <span style="width:{c_pct:.2f}%;background:#94a3b8">{'Product cost ' + _pct(c_pct) if c_pct > 14 else ''}</span>
+          <span style="width:{e_pct:.2f}%;background:#f59e0b">{'Expenses ' + _pct(e_pct) if e_pct > 12 else ''}</span>
+          <span style="width:{p_pct:.2f}%;background:#059669">{'Profit ' + _pct(p_pct) if p_pct > 10 else ''}</span>
+        </div>
+        <div class="legend"><i style="background:#94a3b8"></i>Product cost {_m(cogs)}
+          <i style="background:#f59e0b"></i>Operating expenses {_m(exp)}
+          <i style="background:#059669"></i>{'Profit ' + _m(noi) if noi >= 0 else 'No profit left (loss ' + _m(abs(noi)) + ')'}</div>"""
+
+    # ---- expense donut
+    donut = ""
+    if exp_items:
+        parts = exp_items[:6]
+        rest = sum(v for _, v in exp_items[6:])
+        if rest > 0:
+            parts.append(("Other", rest))
+        legend = "".join(
+            f'<li><i style="background:{_DONUT_COLORS[i % len(_DONUT_COLORS)]}"></i>{_e(n)}<b>{_m(v)}</b></li>'
+            for i, (n, v) in enumerate(parts))
+        donut = f'<div class="donut">{_donut(parts)}<ul>{legend}</ul></div>'
+    else:
+        donut = '<p class="muted">No operating expenses entered yet.</p>'
+
+    # ---- sales by category bars
+    cat_html = ""
+    if cats:
+        mx = cats[0][1]
+        cat_html = "".join(
+            f'<div class="hb"><span class="hl">{_e(n)}</span><span class="ht"><span style="width:{v / mx * 100:.1f}%"></span></span>'
+            f'<b>{_m(v)}</b></div>' for n, v in cats[:10])
+
+    # ---- documents read
+    fact_rows = "".join(
+        f"<tr><td>{_e(DOC_NAME.get(f['cat'], f['cat']))}</td><td>{_e(f['file'])}</td><td>{_e(f['col'])}</td>"
+        f"<td class='r'>{_m(f['total'], True)}</td></tr>" for f in facts)
+    facts_html = (f"<table><thead><tr><th>Document</th><th>File</th><th>Line used</th><th class='r'>Total</th></tr></thead>"
+                  f"<tbody>{fact_rows}</tbody></table>") if facts else '<p class="muted">No spreadsheet documents uploaded yet.</p>'
+
+    checklist = "".join(
+        f"<li class='{'ok' if label not in missing else 'no'}'>{'✓' if label not in missing else '✗'} {_e(label)}</li>"
+        for _, label in CHECKLIST_ITEMS)
+
+    def tile(label, value, sub="", tone=""):
+        return f'<div class="tile {tone}"><span>{_e(label)}</span><b>{value}</b><em>{sub}</em></div>'
+
+    tiles = "".join([
+        tile("Total sales", _m(sales), _e(fin["sales_src"]) or "&nbsp;"),
+        tile("Product cost", _m(cogs), _e(fin["cogs_src"]) or "&nbsp;"),
+        tile("Gross profit", _m(gross), _pct(fin["gross_margin"]) + " margin"),
+        tile("Operating expenses", _m(exp), f"{len(exp_items)} expense lines"),
+        tile("Net operating income", _m(noi), _pct(fin["op_margin"]) + " of sales", "good" if noi >= 0 else "bad"),
+    ])
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_e(store)} - {_e(period)} - Owner Report</title>
+<style>
+:root{{--ink:#18181b;--muted:#71717a;--line:#e4e4e7;--bg:#f4f4f5;--card:#fff;--em:#065f46;--em2:#047857;--soft:#ecfdf5}}
+*{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+.page{{max-width:900px;margin:0 auto;padding:20px 16px 40px}}
+header{{background:var(--em);color:#fff;border-radius:16px;padding:22px 24px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center}}
+header h1{{margin:0;font-size:24px}} header p{{margin:2px 0 0;color:#a7f3d0;font-size:13px}} header .big{{font-size:20px;font-weight:700;text-align:right}}
+.card{{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-top:14px;break-inside:avoid}}
+h2{{margin:0 0 10px;font-size:16px;color:var(--em)}}
+.story{{font-size:16px;line-height:1.6}}
+.tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px}}
+.tile{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column}}
+.tile span{{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}} .tile b{{font-size:22px;margin:2px 0}} .tile em{{font-style:normal;font-size:12px;color:var(--muted)}}
+.tile.good{{background:var(--soft);border-color:#6ee7b7}} .tile.good b{{color:var(--em2)}} .tile.bad{{background:#fef2f2;border-color:#fca5a5}} .tile.bad b{{color:#b91c1c}}
+.stack{{display:flex;height:38px;border-radius:10px;overflow:hidden;background:#e5e7eb}} .stack span{{color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;white-space:nowrap}}
+.legend{{margin-top:8px;font-size:13px;color:var(--muted)}} .legend i,.donut i{{display:inline-block;width:10px;height:10px;border-radius:3px;margin:0 6px 0 12px}} .legend i:first-child{{margin-left:0}}
+.donut{{display:flex;align-items:center;gap:22px;flex-wrap:wrap}} .donut ul{{list-style:none;margin:0;padding:0;flex:1;min-width:220px}}
+.donut li{{display:flex;align-items:center;padding:3px 0;border-bottom:1px solid var(--line);font-size:14px}} .donut li i{{margin-left:0}} .donut li b{{margin-left:auto}}
+.hb{{display:grid;grid-template-columns:150px 1fr 90px;gap:8px;align-items:center;margin:5px 0;font-size:13px}} .hb .hl{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.ht{{background:#e5e7eb;border-radius:6px;height:14px;overflow:hidden}} .ht span{{display:block;height:100%;background:linear-gradient(90deg,#10b981,#065f46)}} .hb b{{text-align:right}}
+table{{width:100%;border-collapse:collapse;font-size:13px}} th,td{{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}} th{{color:var(--muted);font-weight:600}} .r{{text-align:right}}
+.two{{display:grid;grid-template-columns:1fr 1fr;gap:14px}} @media(max-width:640px){{.two{{grid-template-columns:1fr}} .hb{{grid-template-columns:100px 1fr 80px}}}}
+ul.chk{{list-style:none;margin:0;padding:0;columns:2;font-size:13px}} ul.chk li.ok{{color:var(--em2)}} ul.chk li.no{{color:#b91c1c;font-weight:600}}
+.muted{{color:var(--muted);font-size:13px}} .note{{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:8px 12px;margin-top:10px;font-size:13px}}
+footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
+@media print{{body{{background:#fff}} .page{{padding:0}} .card,.tile{{box-shadow:none}} @page{{size:A4;margin:12mm}}}}
+</style></head><body><div class="page">
+<header><div><h1>🌿 {_e(store)}</h1><p>Monthly owner report · {_e(period)}</p></div>
+<div class="big">{'Net operating income<br>' + _m(noi)}</div></header>
+
+<div class="card"><h2>The month in plain English</h2><p class="story">{story}</p>{''.join(f'<div class="note">{_e(n)}</div>' for n in notes)}</div>
+
+<div class="tiles">{tiles}</div>
+
+{f'<div class="card"><h2>Where every sales dollar went</h2>{bar}</div>' if bar else ''}
+
+<div class="two">
+  <div class="card"><h2>Operating expenses</h2>{donut}</div>
+  <div class="card"><h2>Cash and chargebacks</h2>
+    <table><tbody>
+    <tr><td>Cash on hand</td><td class="r"><b>{_m(parse_money(cooh), True) if cooh else 'Not entered'}</b></td></tr>
+    <tr><td>Cash counted on</td><td class="r">{_e(payload.get('cooh_date') or 'Not entered')}</td></tr>
+    <tr><td>Moneris chargebacks</td><td class="r">{_e(chargebacks)}</td></tr>
+    </tbody></table>
+    <h2 style="margin-top:14px">Paperwork ({done} of {len(CHECKLIST_ITEMS)} received)</h2>
+    <ul class="chk">{checklist}</ul>
+  </div>
+</div>
+
+{f'<div class="card"><h2>Sales by product category</h2>{cat_html}</div>' if cat_html else ''}
+
+<div class="card"><h2>Figures read from your uploaded documents</h2>{facts_html}</div>
+
+<footer>Prepared {datetime.now():%B %d, %Y} · The OZ Store · Figures come from the files uploaded for this month. To save as PDF, use your browser's Print option.</footer>
+</div></body></html>"""
 
 
 # ==========================================================================
@@ -1014,7 +1317,10 @@ HTML_CODE = r"""<!DOCTYPE html>
 
                 <!-- Monthly Financial Summary Report (Executive Owner View) -->
                 <div class="mt-6 bg-emerald-900/40 rounded-xl border border-emerald-800 p-5">
-                    <h4 class="text-base font-bold text-emerald-300 mb-4">Monthly Financial Summary & Owner Expense Report</h4>
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                        <h4 class="text-base font-bold text-emerald-300">Monthly Financial Summary & Owner Expense Report</h4>
+                        <button onclick="openOwnerReport()" class="bg-white hover:bg-emerald-50 text-emerald-800 text-xs font-bold px-3.5 py-2 rounded-xl border border-emerald-300 transition">📄 Owner Report (printable)</button>
+                    </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <div class="bg-emerald-800/50 p-3 rounded-lg">
@@ -1035,6 +1341,8 @@ HTML_CODE = r"""<!DOCTYPE html>
                             <span id="fin-net-margin" class="text-lg font-bold text-amber-300">0.0%</span>
                         </div>
                     </div>
+
+                    <div id="doc-facts-box" class="mb-6"></div>
 
                     <h5 class="text-sm font-bold text-emerald-300 mb-3">Operating Expenses (Editable Fields)</h5>
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
@@ -1111,6 +1419,7 @@ HTML_CODE = r"""<!DOCTYPE html>
         let storedFilesMap = REPLACE_FILES_JSON;
         let persistentStoreData = REPLACE_STORE_DATA_JSON;
         let storeInventoryData = {};
+        let docFacts = REPLACE_DOC_FACTS;
 
         function esc(s) {
             return String(s === undefined || s === null ? '' : s)
@@ -1607,6 +1916,18 @@ HTML_CODE = r"""<!DOCTYPE html>
             });
         }
 
+        function openOwnerReport() {
+            const payload = buildPayload();
+            const encoded = encodeURIComponent(JSON.stringify(payload));
+            if (encoded.length > 60000) {
+                alert('Too much data to save before building the report. Press Save All to Cloud first.');
+                return;
+            }
+            persistentStoreData[payload.spk] = payload;
+            try { localStorage.setItem('oz_data_' + payload.spk, JSON.stringify(payload)); } catch(e) {}
+            navigateParent(ctxQS('&action=save_all&then=owner&payload=' + encoded));
+        }
+
         function downloadMasterZip() {
             // Save what is on screen first, then ask the server to build the real package
             // (Excel report + every uploaded document) from the saved data.
@@ -1658,6 +1979,21 @@ HTML_CODE = r"""<!DOCTYPE html>
             }
         }
 
+        function renderDocFacts(formatMoney) {
+            const box = document.getElementById('doc-facts-box');
+            if (!box) return;
+            const items = (docFacts && docFacts.items) ? docFacts.items : [];
+            if (!items.length) {
+                box.innerHTML = '<p class="text-xs text-emerald-200/70">Upload the Greenline, Moneris and OCS reports (Browse buttons in the checklist) and their totals will appear here and feed the figures above.</p>';
+                return;
+            }
+            box.innerHTML = '<h5 class="text-sm font-bold text-emerald-300 mb-3">Figures read from your uploaded documents</h5>' +
+                '<div class="overflow-x-auto rounded-lg border border-emerald-800"><table class="w-full text-left text-xs text-emerald-100">' +
+                '<thead class="bg-emerald-800/60 text-emerald-300"><tr><th class="p-2">Document</th><th class="p-2">File</th><th class="p-2">Column / line used</th><th class="p-2 text-right">Total</th></tr></thead><tbody>' +
+                items.map(i => '<tr class="border-t border-emerald-800"><td class="p-2 font-medium text-white">' + esc(i.label) + '</td><td class="p-2">' + esc(i.file) + '</td><td class="p-2">' + esc(i.col) + '</td><td class="p-2 text-right font-bold">' + formatMoney(Number(i.total) || 0) + '</td></tr>').join('') +
+                '</tbody></table></div>';
+        }
+
         function updateFinancialSummary() {
             try {
                 const spk = getSPK();
@@ -1686,6 +2022,13 @@ HTML_CODE = r"""<!DOCTYPE html>
                     });
                 }
 
+                let salesSrc = totalSales > 0 ? "Inventory sold column" : "";
+                let cogsSrc = totalCogs > 0 ? "Inventory cost column" : "";
+                if (docFacts && docFacts.sales > 0) { totalSales = docFacts.sales; salesSrc = docFacts.sales_src; }
+                if (totalCogs === 0 && docFacts && docFacts.cogs > 0) { totalCogs = docFacts.cogs; cogsSrc = docFacts.cogs_src; }
+                if (totalCogs === 0 && totalSales > 0) {
+                    cogsSrc = "Estimated at 80% of sales";
+                }
                 if (totalCogs === 0 && totalSales > 0) {
                     totalCogs = totalSales * 0.80;
                 }
@@ -1737,6 +2080,13 @@ HTML_CODE = r"""<!DOCTYPE html>
                     netMEl.className = operatingMargin >= 0 ? 'text-lg font-bold text-amber-300' : 'text-lg font-bold text-red-300';
                 }
                 if (totExpEl) totExpEl.textContent = formatMoney(totalExp);
+                const srcLabel = (el, text, fallback) => {
+                    const lab = el ? el.previousElementSibling : null;
+                    if (lab) lab.textContent = text ? fallback + ' - ' + text : fallback;
+                };
+                srcLabel(salesEl, salesSrc, 'Total Sales');
+                srcLabel(cogsEl, cogsSrc, 'Cost of Goods Sold (COGS)');
+                renderDocFacts(formatMoney);
             } catch(e) {
                 console.error("updateFinancialSummary error:", e);
             }
@@ -1785,8 +2135,8 @@ hide_streamlit_style = """
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    .block-container { padding: 0rem; }
-    [data-testid="stExpander"], [data-testid="stAlert"] { margin: 0.75rem 1.25rem 0 1.25rem; }
+    .block-container { padding: 1.25rem 1.5rem 2rem 1.5rem; max-width: 100%; }
+    [data-testid="stExpander"], [data-testid="stAlert"] { margin: 0 0 0.75rem 0; }
     .stButton>button, .stDownloadButton>button { background-color: #047857; color: white; border-radius: 12px; font-weight: bold; border: none; }
     .stButton>button:hover, .stDownloadButton>button:hover { background-color: #065f46; color: white; }
     </style>
@@ -2130,11 +2480,18 @@ def store_file(spk: str, cat: str, name: str, data: bytes):
     return {**meta, "backend": "local", "path": str(p)}, warn
 
 
+@st.cache_data(ttl=600, show_spinner=False, max_entries=32)
+def _dbx_bytes(path: str) -> bytes:
+    dbx = get_dropbox_client()
+    if not dbx:
+        raise RuntimeError("Dropbox not configured")
+    return _dbx_get(dbx, path)
+
+
 def read_file_bytes(meta: dict):
     try:
         if meta.get("backend") == "dropbox":
-            dbx = get_dropbox_client()
-            return _dbx_get(dbx, meta["path"]) if dbx else None
+            return _dbx_bytes(meta["path"])
         p = Path(meta.get("path", ""))
         return p.read_bytes() if p.is_file() else None
     except Exception:
@@ -2208,8 +2565,27 @@ def parse_table(data: bytes, name: str):
         return None
 
 
+def compute_facts(docs: list):
+    """Parse every uploaded CSV/Excel and read the key total out of it."""
+    tables, facts = {}, []
+    for d in docs:
+        if d.get("auto"):
+            continue
+        df = parse_table(d["data"], d["name"])
+        if df is None or df.empty:
+            continue
+        tables[d["key"]] = (d["label"], df)
+        cat = d["key"].split(":")[0]
+        got = extract_total(cat, df)
+        if got:
+            facts.append({"cat": cat, "file": d["name"], **got})
+    return tables, facts
+
+
 def package_entries(store: str, period: str, payload: dict):
     docs, unreadable = gather_documents(payload)
+    _t, facts = compute_facts(docs)
+    payload["doc_facts"] = facts
     tables, doc_log = {}, []
     for d in docs:
         df = None if d.get("auto") else parse_table(d["data"], d["name"])
@@ -2222,9 +2598,11 @@ def package_entries(store: str, period: str, payload: dict):
     for label, name in unreadable:
         doc_log.append([label, name, "", "NOT FOUND in storage - please upload again"])
     xlsx = build_store_workbook(store, period, payload, tables, doc_log)
+    owner_html = build_owner_report_html(store, period, payload)
     inv_rows = payload.get("inventory_data")
     base = safe_name(f"{store} - {period}")
-    entries, seen = [(f"{base}/{base} - Report.xlsx", xlsx)], set()
+    entries, seen = [(f"{base}/{base} - Report.xlsx", xlsx),
+                     (f"{base}/{base} - Owner Report.html", owner_html.encode("utf-8"))], set()
     for d in docs:
         arc = f"{base}/Documents/{safe_name(d['label'])} - {safe_name(d['name'])}"
         n = 2
@@ -2244,6 +2622,16 @@ def build_store_package(store: str, month: str, year: str):
     xlsx, entries, unreadable = package_entries(store, f"{month} {year}", rec_to_engine(rec))
     return {"spk": spk, "xlsx": xlsx, "zip": build_zip(entries), "n_docs": len(entries) - 1,
             "unreadable": unreadable, "at": datetime.now().strftime("%H:%M:%S")}
+
+
+def build_owner_report(store: str, month: str, year: str):
+    rec = get_record(f"{store}_{month}_{year}")
+    if not rec:
+        return None
+    payload = rec_to_engine(rec)
+    docs, _bad = gather_documents(payload)
+    _t, payload["doc_facts"] = compute_facts(docs)
+    return build_owner_report_html(store, f"{month} {year}", payload)
 
 
 def build_all_package(month: str, year: str):
@@ -2306,7 +2694,7 @@ def _log_in(username, name, role):
 
 
 def _log_out():
-    for k in ("logged_in", "username", "name", "role", "ctx", "pkg", "all_pkg"):
+    for k in ("logged_in", "username", "name", "role", "ctx", "pkg", "all_pkg", "owner"):
         st.session_state.pop(k, None)
 
 
@@ -2472,6 +2860,9 @@ def act_save_all():
     if query_params.get("then") == "package":
         st.session_state.panel_open = True
         st.session_state.auto_pkg = True
+    elif query_params.get("then") == "owner":
+        st.session_state.panel_open = True
+        st.session_state.auto_owner = True
     if ok:
         flash("success", f"Saved {store} - {month} {year} and synced to Dropbox.")
     else:
@@ -2645,6 +3036,24 @@ def render_panel():
             d2.download_button("⬇️ Full package (ZIP)", pkg["zip"], file_name=f"{base} - Package.zip",
                                mime="application/zip", key="dl_zip", **STRETCH)
 
+        st.markdown("**Owner report**")
+        st.caption("A one-page, easy-to-read report for the store owner with charts. It is also included in the package ZIP. "
+                   "Open it in your browser and use Print to save it as a PDF.")
+        auto_o = bool(st.session_state.pop("auto_owner", False))
+        if st.button("📄 Build owner report", key="build_owner", **STRETCH) or auto_o:
+            with st.spinner("Writing the owner report…"):
+                oh = build_owner_report(store, month, year)
+            if oh is None:
+                st.info("Nothing saved yet for this store and month. Press Save All to Cloud first.")
+            else:
+                st.session_state.owner = {"spk": spk, "html": oh}
+        ow = st.session_state.get("owner")
+        if ow and ow["spk"] == spk:
+            st.download_button("⬇️ Download owner report (.html)", ow["html"].encode("utf-8"),
+                               file_name=f"{safe_name(store + ' - ' + month + ' ' + year)} - Owner Report.html",
+                               mime="text/html", key="dl_owner", **STRETCH)
+            components.html(ow["html"], height=1250, scrolling=True)
+
         if is_staff:
             st.divider()
             st.markdown(f"**All stores — {month} {year}**")
@@ -2686,6 +3095,17 @@ def build_html_page() -> str:
                                  for f in lst] for cat, lst in (cj.get("files") or {}).items() if lst}
         store_data_json[spk] = rec
 
+    page_facts = {"sales": 0, "sales_src": "", "cogs": 0, "cogs_src": "", "items": []}
+    if rec:
+        try:
+            docs, _bad = gather_documents(rec_to_engine(rec))
+            _t, facts = compute_facts(docs)
+            page_facts = {**summarize_facts(facts), "items": [
+                {"label": DOC_LABELS.get(f["cat"], f["cat"]), "file": f["file"], "col": f["col"],
+                 "rows": f["rows"], "total": f["total"]} for f in facts]}
+        except Exception:
+            log.exception("Could not read totals from the uploaded documents")
+
     cred_rows = ""
     if role == "admin":
         with _connect() as conn:
@@ -2722,6 +3142,7 @@ def build_html_page() -> str:
         .replace("REPLACE_ACTIVE_STORE", e(ctx["store"]))
         .replace("REPLACE_MONTH", e(ctx["month"]))
         .replace("REPLACE_YEAR", e(ctx["year"]))
+        .replace("REPLACE_DOC_FACTS", json.dumps(page_facts).replace("</", "<\\/"))
         .replace("REPLACE_FILES_JSON", json.dumps(files_json).replace("</", "<\\/"))
         .replace("REPLACE_STORE_DATA_JSON", json.dumps(store_data_json, default=str).replace("</", "<\\/"))
     )
