@@ -910,7 +910,8 @@ def _chk(label, a, b, tol_pct=1.0, tol_abs=25.0, a_name="", b_name=""):
 
 
 
-def cash_consolidation(tender: dict, moneris: list, cooh_now, prev_cooh, cash_deposited, prev_label: str = "") -> dict:
+def cash_consolidation(tender: dict, moneris: list, cooh_now, prev_cooh, cash_deposited, prev_label: str = "",
+                       opening_entered=None) -> dict:
     """Ties the money taken (Greenline payment types) to the bank deposits and the cash on hand."""
     low = {str(k).casefold(): (k, v) for k, v in (tender or {}).items()}
     cash_key = next((k for k in low if "cash" in k), None)
@@ -928,12 +929,17 @@ def cash_consolidation(tender: dict, moneris: list, cooh_now, prev_cooh, cash_de
             cards.append({"label": low[key][0] + " (no Moneris statement uploaded)", "greenline": low[key][1], "moneris_net": None,
                           "diff": None, "fees": None, "deposited": None})
     other = [(low[k][0], low[k][1]) for k in low if k not in used and k not in ("moneris", "online")]
+    if opening_entered is not None:
+        prev_cooh, opening_note = opening_entered, "Entered in the Cash On Hand section"
+    else:
+        opening_note = ("Counted at the end of " + prev_label) if prev_cooh is not None else \
+            ("Not entered for " + (prev_label or "last month") + " - treated as 0")
     opening = prev_cooh if prev_cooh is not None else 0.0
     expected = opening + cash_sales - (cash_deposited or 0.0)
     return {
         "receipts": [(v[0], v[1]) for v in low.values()], "total_receipts": sum(v[1] for v in low.values()),
         "cards": cards, "other": other,
-        "cash": {"opening": prev_cooh, "opening_label": prev_label, "sales": cash_sales, "deposited": cash_deposited,
+        "cash": {"opening": prev_cooh, "opening_label": prev_label, "opening_note": opening_note, "sales": cash_sales, "deposited": cash_deposited,
                  "expected": expected if cash_deposited is not None else None, "counted": cooh_now,
                  "over_short": (cooh_now - expected) if (cooh_now is not None and cash_deposited is not None) else None,
                  "to_deposit": (opening + cash_sales - cooh_now) if cooh_now is not None else None},
@@ -1028,7 +1034,7 @@ def build_income(payload: dict) -> dict:
     inc["moneris"] = [{"cat": i["cat"], **i["m"]} for i in mon]
     inc["cash"] = cash_consolidation(tender, inc["moneris"], _money_or_none(payload.get("cooh_text")),
                                      payload.get("prev_cooh"), _money_or_none((payload.get("expenses") or {}).get("cashdep")),
-                                     payload.get("prev_label", ""))
+                                     payload.get("prev_label", ""), _money_or_none((payload.get("expenses") or {}).get("opencash")))
 
     # ---- cross-checks between the files
     ck = inc["checks"]
@@ -1104,8 +1110,7 @@ def _cash_sheet(wb, store, period, cc, used):
         r[0] += 1
     c = cc["cash"]
     head("3. CASH", ["Item", "Amount", "Note"])
-    row(["Cash on hand at start of month", c["opening"], ("Counted at the end of " + c["opening_label"]) if c["opening"] is not None
-         else "No cash count saved for " + (c["opening_label"] or "last month") + " - treated as 0"])
+    row(["Cash on hand at start of month", c["opening"], c.get("opening_note", "")])
     row(["+ Cash sales", c["sales"], "Greenline payment types"])
     if c["deposited"] is not None:
         row(["- Cash deposited to bank (Brinks)", -c["deposited"], "Total deposits entered in the Brinks Book section"])
@@ -1747,6 +1752,11 @@ HTML_CODE = r"""<!DOCTYPE html>
                                     </div>
                                 </div>
                                 <div id="files-cooh" class="flex flex-wrap gap-1.5 mt-1 text-[11px] text-zinc-600">No files uploaded</div>
+                                <div class="flex flex-col sm:flex-row sm:items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
+                                    <label for="exp-opencash" class="text-xs font-bold text-emerald-900 whitespace-nowrap">🗓️ Cash on hand at end of last month</label>
+                                    <input type="text" inputmode="decimal" id="exp-opencash" placeholder="Leave empty if last month is filled out" oninput="onExpenseInput()" class="flex-1 min-w-0 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-sm font-semibold text-zinc-800">
+                                </div>
+                                <p class="text-[11px] text-zinc-500" id="opencash-hint">The starting cash for this month's cash consolidation.</p>
                             </div>
 
                             <!-- 2. Brinks Book -->
@@ -2727,6 +2737,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                         if (exp.repairs !== undefined) { const el = document.getElementById('exp-repairs'); if (el) el.value = exp.repairs; }
                         if (exp.other !== undefined) { const el = document.getElementById('exp-other'); if (el) el.value = exp.other; }
                         if (exp.cashdep !== undefined) { const el = document.getElementById('exp-cashdep'); if (el) el.value = exp.cashdep; }
+                        if (exp.opencash !== undefined) { const el = document.getElementById('exp-opencash'); if (el) el.value = exp.opencash; }
                     }
                 }
                 const invObj = data.inventory_data || data.inventory_json;
@@ -2927,7 +2938,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                 'brinks': document.getElementById('brinks-date')?.value || ''
             };
 
-            const expenses = {rent: document.getElementById('exp-rent')?.value || '', payroll: document.getElementById('exp-payroll')?.value || '', utilities: document.getElementById('exp-utilities')?.value || '', insurance: document.getElementById('exp-insurance')?.value || '', systemfees: document.getElementById('exp-systemfees')?.value || '', repairs: document.getElementById('exp-repairs')?.value || '', other: document.getElementById('exp-other')?.value || '', cashdep: document.getElementById('exp-cashdep')?.value || ''};
+            const expenses = {rent: document.getElementById('exp-rent')?.value || '', payroll: document.getElementById('exp-payroll')?.value || '', utilities: document.getElementById('exp-utilities')?.value || '', insurance: document.getElementById('exp-insurance')?.value || '', systemfees: document.getElementById('exp-systemfees')?.value || '', repairs: document.getElementById('exp-repairs')?.value || '', other: document.getElementById('exp-other')?.value || '', cashdep: document.getElementById('exp-cashdep')?.value || '', opencash: document.getElementById('exp-opencash')?.value || ''};
 
             const checklistData = {
                 checkboxes: checkboxes,
@@ -3351,7 +3362,7 @@ HTML_CODE = r"""<!DOCTYPE html>
             const counted = num('cooh-text'), dep = num('exp-cashdep');
             const prev = (docFacts && docFacts.prev_cooh !== null && docFacts.prev_cooh !== undefined) ? Number(docFacts.prev_cooh) : null;
             const prevLabel = (docFacts && docFacts.prev_label) || 'last month';
-            if (!keys.length && counted === null) {
+            if (!keys.length && counted === null && num('exp-opencash') === null) {
                 return '<div class="mt-5"><div class="text-xs font-bold uppercase tracking-wide text-emerald-800 mb-1">Cash consolidation</div><p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">Upload the Greenline Payment Types report and enter the Cash On Hand to build the cash consolidation.</p></div>';
             }
             const low = {}; keys.forEach(k => { low[k.toLowerCase()] = { name: k, v: Number(tender[k]) || 0 }; });
@@ -3379,10 +3390,13 @@ HTML_CODE = r"""<!DOCTYPE html>
                     '</tbody></table></div>';
             }
             // 3. cash
-            const opening = prev === null ? 0 : prev;
+            const openEntered = num('exp-opencash');
+            const opening = openEntered !== null ? openEntered : (prev === null ? 0 : prev);
+            const openNote = openEntered !== null ? 'Entered in the Cash On Hand section (end of ' + prevLabel + ')'
+                : (prev === null ? 'Not entered - counted as $0. Enter last month\'s closing cash in the Cash On Hand section.' : 'Counted at the end of ' + prevLabel);
             const row = (label, v, note, cls) => '<tr class="border-t border-zinc-200 ' + (cls || '') + '"><td class="py-1 pr-2">' + label + (note ? '<div class="text-[11px] text-zinc-500 font-normal">' + esc(note) + '</div>' : '') + '</td>' + td(v) + '</tr>';
             html += '<div class="text-xs font-bold text-zinc-700 mb-1">3. Cash</div><table class="w-full text-sm"><tbody>' +
-                row('Cash on hand at start of month', prev, prev === null ? 'No cash count saved for ' + prevLabel + ' - counted as $0' : 'Counted at the end of ' + prevLabel) +
+                row('Cash on hand at start of month', openEntered !== null ? openEntered : prev, openNote) +
                 row('+ Cash sales', cashSales, 'Greenline payment types');
             if (dep !== null) {
                 const expected = opening + cashSales - dep;
@@ -3480,6 +3494,23 @@ HTML_CODE = r"""<!DOCTYPE html>
             } catch (e) {}
         }
         setTimeout(updateBrinksTotal, 200);
+
+
+        function setupOpeningCash() {
+            try {
+                const el = document.getElementById('exp-opencash'), hint = document.getElementById('opencash-hint');
+                const prev = (docFacts && docFacts.prev_cooh !== null && docFacts.prev_cooh !== undefined) ? Number(docFacts.prev_cooh) : null;
+                const label = (docFacts && docFacts.prev_label) || 'last month';
+                if (prev !== null) {
+                    if (el) el.placeholder = 'Leave empty to use ' + moneyFmt(prev) + ' from ' + label;
+                    if (hint) hint.textContent = 'Leave empty to use the ' + moneyFmt(prev) + ' counted at the end of ' + label + ', or type a different amount.';
+                } else {
+                    if (el) el.placeholder = 'Nothing saved for ' + label + ' - type the amount';
+                    if (hint) hint.textContent = 'No cash count is saved for ' + label + '. Type the cash on hand at the end of ' + label + ' so the cash consolidation is exact.';
+                }
+            } catch (e) {}
+        }
+        setTimeout(setupOpeningCash, 200);
 
         initApp();
     </script>
@@ -3611,7 +3642,7 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
-APP_VERSION = "2026-10-24 r11 (Brinks deposits)"
+APP_VERSION = "2026-10-24 r13 (opening cash hint)"
 USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
