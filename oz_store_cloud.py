@@ -2014,8 +2014,19 @@ HTML_CODE = r"""<!DOCTYPE html>
         }
 
         function openUploadPanel(cat) {
+            // Opens the computer's file picker through an invisible uploader (nothing is shown on screen).
             saveLocalOnly();
-            navigateParent(ctxQS('&action=upload_panel&cat=' + encodeURIComponent(cat)));
+            try {
+                const d = window.parent.document;
+                let inp = d.querySelector('.st-key-up_' + cat + ' input[type=file]');
+                if (!inp) {
+                    alert('The file picker is still loading. Please try again in a moment.');
+                    return;
+                }
+                inp.click();
+            } catch (e) {
+                alert('Could not open the file picker: ' + e);
+            }
         }
 
         function navigateParent(queryString) {
@@ -3479,11 +3490,9 @@ def act_save_all():
         log.exception("Could not file the formatted inventory report")
     ok, err = sync_all_to_dropbox()
     if query_params.get("then") == "package":
-        st.session_state.panel_open = True
         st.session_state.auto_pkg = True
     elif query_params.get("then") == "owner":
-        st.session_state.panel_open = True
-        st.session_state.auto_owner = True
+        st.session_state.scroll_owner = True
     if ok:
         flash("success", f"Saved {store} - {month} {year} and synced to Dropbox.")
     else:
@@ -3575,11 +3584,8 @@ def handle_action(action: str):
         act_clear_files()
     elif action == "upload_panel":
         cat = query_params.get("cat", "")
-        if cat in DOC_LABELS:
-            st.session_state.upl_cat_pref = cat
-        st.session_state.panel_open = True
+        pass
     elif action == "package":
-        st.session_state.panel_open = True
         st.session_state.auto_pkg = True
     reset_url_and_rerun()
 
@@ -3590,141 +3596,76 @@ if "action" in query_params:
 # ----------------------------------------------------------------------------
 # Documents & reports panel (real uploads + the report generator)
 # ----------------------------------------------------------------------------
-def render_panel():
+def process_hidden_uploads(chosen):
+    """Files chosen with the page's own Browse buttons arrive here (the uploaders are invisible)."""
+    ver = st.session_state.setdefault("upl_ver", 0)
+    for cat, _label in UPLOAD_CATS:
+        files = chosen.get(cat)
+        if not files:
+            continue
+        ok_n, problems, metas = 0, [], []
+        for f in files:
+            if f.size > MAX_UPLOAD_MB * 1024 * 1024:
+                problems.append(f"{f.name} is over {MAX_UPLOAD_MB} MB.")
+                continue
+            meta, warn = store_file(spk, cat, f.name, f.getvalue())
+            metas.append(meta)
+            ok_n += 1
+            if warn:
+                problems.append(warn)
+        if metas:
+            add_files_to_record(spk, cat, metas)
+            if read_file_bytes(metas[0]) is None:
+                problems.append("The file was saved but could not be read back from storage: "
+                                + _READ_ERR.get(metas[0].get("id"), "unknown error"))
+            synced, err = sync_all_to_dropbox()
+            if not synced:
+                problems.append(f"Dropbox sync failed: {err}")
+        st.session_state.upl_ver = ver + 1
+        if problems:
+            flash("warning", f"{ok_n} file(s) saved to {DOC_LABELS[cat]}. " + " ".join(dict.fromkeys(problems)))
+        else:
+            flash("success", f"{ok_n} file(s) saved to {DOC_LABELS[cat]}. Tick its box in the checklist and press Save All.")
+        st.rerun()
+
+
+def render_hidden_tools():
+    """Invisible controls driven by the page's buttons. Nothing here is ever shown on screen."""
     store, month, year = ctx["store"], ctx["month"], ctx["year"]
-    pref = st.session_state.pop("upl_cat_pref", None)
-    if pref in DOC_LABELS:
-        st.session_state["upl_cat"] = pref
-    st.session_state.setdefault("upl_ver", 0)
-
-    with st.expander(f"📎 Documents & Reports — {store} · {month} {year}", expanded=True):
-        st.caption("Files attached here are stored for real (Dropbox) and included in the accountant package. "
-                   "Use the store tabs and period menu below to change store or month.")
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            cat = st.selectbox("Document category", [k for k, _ in UPLOAD_CATS],
-                               format_func=lambda k: DOC_LABELS[k], key="upl_cat")
-        with c2:
-            files = st.file_uploader("Choose one or more files (CSV, Excel, PDF, photos)",
-                                     accept_multiple_files=True, key=f"upl_files_{st.session_state.upl_ver}")
-        if st.button("⬆️ Upload selected files", disabled=not files, **STRETCH):
-            ok_n, problems = 0, []
-            metas = []
-            for f in files:
-                if f.size > MAX_UPLOAD_MB * 1024 * 1024:
-                    problems.append(f"{f.name} is over {MAX_UPLOAD_MB} MB.")
-                    continue
-                meta, warn = store_file(spk, cat, f.name, f.getvalue())
-                metas.append(meta)
-                ok_n += 1
-                if warn:
-                    problems.append(warn)
-            if metas:
-                add_files_to_record(spk, cat, metas)
-                if read_file_bytes(metas[0]) is None:
-                    problems.append("The file was saved but could not be read back from storage: "
-                                    + _READ_ERR.get(metas[0].get("id"), "unknown error"))
-                synced, err = sync_all_to_dropbox()
-                if not synced:
-                    problems.append(f"Dropbox sync failed: {err}")
-            st.session_state.upl_ver += 1
-            st.session_state.panel_open = True
-            if problems:
-                flash("warning", f"{ok_n} file(s) saved to {DOC_LABELS[cat]}. " + " ".join(dict.fromkeys(problems)))
-            else:
-                flash("success", f"{ok_n} file(s) saved to {DOC_LABELS[cat]}. Tick its box in the checklist and press Save All.")
-            st.rerun()
-
-        if st.button("🧹 Remove files that are missing from storage", key="clean_missing", **STRETCH):
-            rec_c = get_record(spk)
-            files_c = ((rec_c or {}).get("checklist_json") or {}).get("files", {})
-            removed = 0
-            for cat_c in list(files_c):
-                keep = []
-                for f_c in files_c[cat_c]:
-                    if read_file_bytes(f_c) is None:
-                        removed += 1
-                    else:
-                        keep.append(f_c)
-                files_c[cat_c] = keep
-            if rec_c is not None and removed:
-                save_record(spk, rec_c)
-                sync_all_to_dropbox()
-            st.session_state.panel_open = True
-            flash("success" if removed else "info",
-                  f"Removed {removed} file record(s) whose file could not be found. Upload those documents again, then press Save All to Cloud."
-                  if removed else "Every saved file was found in storage.")
-            st.rerun()
-
-        st.markdown("**Accountant package**")
-        st.caption("Builds from the last saved data (press Save All to Cloud first): an Excel report with the checklist, "
-                   "cash, expenses, financial summary, formatted inventory and one sheet for every CSV/Excel document, "
-                   "plus a ZIP containing the report and all the original files.")
-        auto = bool(st.session_state.pop("auto_pkg", False))
-        if st.button("⚙️ Build package for this store & month", key="build_pkg", **STRETCH) or auto:
-            with st.spinner("Reading documents and building the report…"):
-                pkg = build_store_package(store, month, year)
-            if pkg is None:
-                st.info("Nothing saved yet for this store and month. Press Save All to Cloud first.")
-            else:
+    ver = st.session_state.setdefault("upl_ver", 0)
+    st.markdown("<style>.st-key-oz_hidden_tools{position:fixed !important;left:-10000px !important;top:0 !important;"
+                "width:1px !important;height:1px !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}"
+                "</style>", unsafe_allow_html=True)
+    with st.container(key="oz_hidden_tools"):
+        chosen = {}
+        for cat, _label in UPLOAD_CATS:
+            with st.container(key=f"up_{cat}"):
+                chosen[cat] = st.file_uploader(DOC_LABELS[cat], accept_multiple_files=True, key=f"upl_{cat}_{ver}",
+                                               label_visibility="collapsed")
+        process_hidden_uploads(chosen)
+        if st.session_state.pop("auto_pkg", False):
+            pkg = build_store_package(store, month, year)
+            if pkg is not None:
                 st.session_state.pkg = pkg
+                st.session_state.dl_now = True
+            else:
+                flash("info", "Nothing saved yet for this store and month. Press Save All to Cloud first.")
         pkg = st.session_state.get("pkg")
         if pkg and pkg["spk"] == spk:
             base = safe_name(f"{store} - {month} {year}")
-            st.success(f"Package ready: {pkg['n_docs']} document(s) included (built {pkg['at']}).")
-            for label, name, *_e in pkg["unreadable"]:
-                st.warning(f"Couldn't read {name} ({label}) from storage; please upload it again.")
-            d1, d2 = st.columns(2)
-            d1.download_button("⬇️ Excel report", pkg["xlsx"], file_name=f"{base} - Report.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               key="dl_xlsx", **STRETCH)
-            d2.download_button("⬇️ Full package (ZIP)", pkg["zip"], file_name=f"{base} - Package.zip",
-                               mime="application/zip", key="dl_zip", **STRETCH)
+            st.download_button("zip", pkg["zip"], file_name=f"{base} - Package.zip", mime="application/zip", key="dl_zip")
+            if pkg.get("unreadable"):
+                names = ", ".join(n for _l, n, *_e in pkg["unreadable"])
+                st.session_state.flash_keep = ("warning", f"Could not read from storage: {names}. Please upload again.")
+    js = ""
+    if st.session_state.pop("dl_now", False):
+        js += ("setTimeout(function(){try{var b=window.parent.document.querySelector('.st-key-dl_zip button');if(b)b.click();}catch(e){}},700);")
+    if st.session_state.pop("scroll_owner", False):
+        js += ("function go(){try{var f=window.parent.document.querySelectorAll('iframe');if(f.length>1)"
+               "f[f.length-1].scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}}setTimeout(go,900);setTimeout(go,2000);")
+    if js:
+        components.html("<script>" + js + "</script>", height=0)
 
-        st.markdown("**Owner report**")
-        st.caption("A one-page, easy-to-read report for the store owner with charts. It is also included in the package ZIP. "
-                   "Open it in your browser and use Print to save it as a PDF.")
-        auto_o = bool(st.session_state.pop("auto_owner", False))
-        if st.button("📄 Build owner report", key="build_owner", **STRETCH) or auto_o:
-            with st.spinner("Writing the owner report…"):
-                oh = build_owner_report(store, month, year)
-            if oh is None:
-                st.info("Nothing saved yet for this store and month. Press Save All to Cloud first.")
-            else:
-                st.session_state.owner = {"spk": spk, "html": oh}
-        ow = st.session_state.get("owner")
-        if ow and ow["spk"] == spk:
-            st.download_button("⬇️ Download owner report (.html)", ow["html"].encode("utf-8"),
-                               file_name=f"{safe_name(store + ' - ' + month + ' ' + year)} - Owner Report.html",
-                               mime="text/html", key="dl_owner", **STRETCH)
-            components.html(ow["html"], height=1250, scrolling=True)
-
-        if is_staff:
-            st.divider()
-            st.markdown(f"**All stores — {month} {year}**")
-            if st.button("📚 Build consolidated package (all stores)", key="build_all", **STRETCH):
-                with st.spinner("Building every store…"):
-                    allp = build_all_package(month, year)
-                if allp is None:
-                    st.info("No store has saved data for this month yet.")
-                else:
-                    st.session_state.all_pkg = allp
-            allp = st.session_state.get("all_pkg")
-            if allp and allp["key"] == f"{month}_{year}":
-                st.success(f"Consolidated package ready ({allp['stores']} store(s)).")
-                a1, a2 = st.columns(2)
-                a1.download_button("⬇️ All-stores summary (.xlsx)", allp["xlsx"],
-                                   file_name=f"All Stores - {month} {year} - Summary.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   key="dl_all_x", **STRETCH)
-                a2.download_button("⬇️ Everything (ZIP)", allp["zip"],
-                                   file_name=f"All Stores - {month} {year} - Package.zip",
-                                   mime="application/zip", key="dl_all_z", **STRETCH)
-
-
-    if st.button("✕ Close this panel", key="close_panel", **STRETCH):
-        st.session_state.panel_visible = False
-        st.rerun()
 
 
 # ----------------------------------------------------------------------------
@@ -3807,14 +3748,19 @@ _tok = current_token()
 if _tok and query_params.get("auth_user") != _tok:
     st.query_params["auth_user"] = _tok
 
+# Nothing is drawn above the page any more: messages are toasts, and the upload panel sits at the very bottom.
 _flash = st.session_state.pop("flash", None)
 if _flash:
-    getattr(st, _flash[0], st.info)(_flash[1])
+    try:
+        st.toast(_flash[1], icon={"success": "✅", "warning": "⚠️", "error": "❌"}.get(_flash[0], "ℹ️"))
+    except Exception:
+        pass
+    if _flash[0] in ("warning", "error"):
+        st.session_state.flash_keep = _flash
+    else:
+        st.session_state.pop("flash_keep", None)
 
-if st.session_state.pop("panel_open", False):
-    st.session_state.panel_visible = True
-if st.session_state.get("panel_visible"):
-    render_panel()
+render_hidden_tools()
 components.html(build_html_page(), height=3000, scrolling=True)
 
 # ----------------------------------------------------------------------------
@@ -3836,4 +3782,7 @@ try:
 except Exception as _ex:
     log.exception("Could not build the owner report")
     st.warning(f"The owner report could not be built: {type(_ex).__name__}: {_ex}")
+_keep = st.session_state.get("flash_keep")
+if _keep:
+    getattr(st, _keep[0], st.info)(_keep[1])
 st.caption(f"App version {APP_VERSION}")
