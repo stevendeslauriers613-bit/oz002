@@ -3301,13 +3301,16 @@ HTML_CODE = r"""<!DOCTYPE html>
         st.textContent = '.oz-noscroll{scrollbar-width:none !important}.oz-noscroll::-webkit-scrollbar{display:none !important;width:0 !important}';
         d.head.appendChild(st);
       }
-      var el = window.frameElement, list = [];
+      var el = window.frameElement, all = [], keeper = null;
       while (el && (el = el.parentElement) && el !== d.documentElement){
         var cs = window.parent.getComputedStyle(el);
-        if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 2) list.push(el);
+        if (/(auto|scroll|overlay)/.test(cs.overflowY)){
+          all.push(el);
+          if (!keeper && el.scrollHeight > el.clientHeight + 2) keeper = el;
+        }
       }
-      if (list.length){
-        list.forEach(function(e, i){ if (i === 0) e.classList.remove('oz-noscroll'); else e.classList.add('oz-noscroll'); });
+      if (keeper){
+        all.forEach(function(e){ if (e === keeper) e.classList.remove('oz-noscroll'); else e.classList.add('oz-noscroll'); });
         d.documentElement.classList.add('oz-noscroll'); d.body.classList.add('oz-noscroll');
       }
     }catch(e){}
