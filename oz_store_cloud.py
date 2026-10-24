@@ -2498,9 +2498,21 @@ HTML_CODE = r"""<!DOCTYPE html>
 
         function navigateParent(queryString) {
             try {
+                const pw = window.parent, pd = pw.document;
+                try {
+                    if (window.top !== pw && queryString.indexOf('action=') === -1) window.top.history.replaceState(null, '', window.top.location.pathname + queryString);
+                } catch (e2) {}
+                const a = pd.createElement('a');
+                a.href = pw.location.pathname + queryString;
+                a.style.display = 'none';
+                pd.body.appendChild(a);
+                a.click();
+                return;
+            } catch (e) {}
+            try {
                 window.parent.location.search = queryString;
             } catch (e) {
-                window.location.href = queryString;
+                console.error('Could not change page', e);
             }
         }
 
@@ -3419,7 +3431,7 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
-APP_VERSION = "2026-10-24 r7 (one scrollbar)"
+APP_VERSION = "2026-10-24 r8 (page switch fix)"
 USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
@@ -3999,7 +4011,10 @@ def apply_global_css():
         "[data-testid='stMain']::-webkit-scrollbar-track{background:#e4e4e7}"
         "[data-testid='stMain']::-webkit-scrollbar-thumb{background:#059669;border-radius:9px;border:3px solid #e4e4e7;min-height:60px}"
         "[data-testid='stMain']::-webkit-scrollbar-thumb:hover{background:#047857}"
-        "@supports not selector(::-webkit-scrollbar){[data-testid='stMain']{scrollbar-color:#059669 #e4e4e7}}"
+        # Streamlit makes its own bar thin and transparent (scrollbar-width:thin; scrollbar-color:transparent),
+        # which modern Chrome/Edge/Firefox obey over the rules above, so override those too.
+        "[data-testid='stMain'],section.main{scrollbar-width:auto !important;scrollbar-color:#059669 #e4e4e7 !important}"
+        "[data-testid='stCaptionContainer'],[data-testid='stCaptionContainer'] *{color:#71717a !important}"
         "</style>", unsafe_allow_html=True)
 
 
