@@ -2584,9 +2584,8 @@ def render_panel():
     if pref in DOC_LABELS:
         st.session_state["upl_cat"] = pref
     st.session_state.setdefault("upl_ver", 0)
-    open_panel = bool(st.session_state.pop("panel_open", False))
 
-    with st.expander(f"📎 Documents & Reports — {store} · {month} {year}", expanded=open_panel):
+    with st.expander(f"📎 Documents & Reports — {store} · {month} {year}", expanded=True):
         st.caption("Files attached here are stored for real (Dropbox) and included in the accountant package. "
                    "Use the store tabs and period menu below to change store or month.")
         c1, c2 = st.columns([1, 2])
@@ -2669,6 +2668,11 @@ def render_panel():
                                    mime="application/zip", key="dl_all_z", **STRETCH)
 
 
+    if st.button("✕ Close this panel", key="close_panel", **STRETCH):
+        st.session_state.panel_visible = False
+        st.rerun()
+
+
 # ----------------------------------------------------------------------------
 # Build the page
 # ----------------------------------------------------------------------------
@@ -2731,7 +2735,9 @@ if _tok and query_params.get("auth_user") != _tok:
 _flash = st.session_state.pop("flash", None)
 if _flash:
     getattr(st, _flash[0], st.info)(_flash[1])
-    st.session_state.panel_open = _flash[0] != "success" or st.session_state.get("panel_open", False)
 
-render_panel()
+if st.session_state.pop("panel_open", False):
+    st.session_state.panel_visible = True
+if st.session_state.get("panel_visible"):
+    render_panel()
 components.html(build_html_page(), height=3000, scrolling=True)
