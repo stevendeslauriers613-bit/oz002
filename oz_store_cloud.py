@@ -24,7 +24,6 @@ def get_dropbox_client():
     """Get authenticated Dropbox client."""
     try:
         import dropbox
-        # First check Streamlit secrets
         token = st.secrets.get("DROPBOX_ACCESS_TOKEN") if hasattr(st, "secrets") else None
         if token:
             return dropbox.Dropbox(token)
@@ -119,7 +118,7 @@ def init_db():
 
 init_db()
 
-# --- HANDLE QUERY PARAMETER & API ACTIONS ---
+# --- HANDLE QUERY PARAMETER & SAVE ACTIONS ---
 query_params = st.query_params
 
 if "action" in query_params:
@@ -127,7 +126,52 @@ if "action" in query_params:
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    if action == "update_user":
+    if action == "save_state":
+        # Read encoded payload passed via query parameter
+        import urllib.parse
+        payload_raw = query_params.get("payload", "")
+        if payload_raw:
+            try:
+                payload = json.loads(urllib.parse.unquote(payload_raw))
+                spk = payload["spk"]
+                
+                # Save to SQLite
+                cursor.execute(
+                    "INSERT OR REPLACE INTO store_data (store_period_key, store, period, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        spk,
+                        payload.get("store", ""),
+                        payload.get("period", ""),
+                        payload.get("cooh_text", ""),
+                        payload.get("cooh_date", ""),
+                        payload.get("chargebacks_text", ""),
+                        json.dumps(payload.get("checklist_json", {})),
+                        json.dumps(payload.get("inventory_json")) if payload.get("inventory_json") else None,
+                        payload.get("inventory_filename", "")
+                    )
+                )
+                conn.commit()
+
+                # Also backup master state to Dropbox if connected
+                dbx = get_dropbox_client()
+                if dbx:
+                    ensure_dropbox_folder(dbx)
+                    # Gather all store data to sync master JSON
+                    cursor.execute("SELECT store_period_key, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename FROM store_data")
+                    all_rows = cursor.fetchall()
+                    master_dict = {}
+                    for r in all_rows:
+                        master_dict[r[0]] = {
+                            "cooh_text": r[1], "cooh_date": r[2], "chargebacks_text": r[3],
+                            "checklist_json": json.loads(r[4]) if r[4] else {},
+                            "inventory_data": json.loads(r[5]) if r[5] else None,
+                            "inventory_filename": r[6]
+                        }
+                    upload_to_dropbox(dbx, "master_store_state.json", json.dumps(master_dict, indent=2).encode("utf-8"))
+            except Exception as e:
+                print("Save error:", e)
+
+    elif action == "update_user":
         orig_user = query_params.get("orig_username", "").lower().strip()
         new_user = query_params.get("username", "").lower().strip()
         name = query_params.get("name", "")
@@ -266,30 +310,6 @@ if not st.session_state.logged_in:
                 else:
                     st.error("Invalid username or password.")
     st.stop()
-
-# --- HANDLE STREAMLIT QUERY/CALLBACK SAVES FOR FILES & CHECKLISTS ---
-# Listen for incoming save requests sent via query params or session state updates
-if "save_payload" in st.session_state:
-    payload = st.session_state.save_payload
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT OR REPLACE INTO store_data (store_period_key, store, period, cooh_text, cooh_date, chargebacks_text, checklist_json, inventory_json, inventory_filename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            payload["spk"],
-            payload.get("store", ""),
-            payload.get("period", ""),
-            payload.get("cooh_text", ""),
-            payload.get("cooh_date", ""),
-            payload.get("chargebacks_text", ""),
-            json.dumps(payload.get("checklist_json", {})),
-            json.dumps(payload.get("inventory_json")) if payload.get("inventory_json") else None,
-            payload.get("inventory_filename", "")
-        )
-    )
-    conn.commit()
-    conn.close()
-    del st.session_state.save_payload
 
 # --- FETCH USERS, FILES & STORE DATA FOR JAVASCRIPT INJECTION ---
 conn = sqlite3.connect(DB_FILE)
@@ -503,7 +523,7 @@ html_code = """
                     <h2 class="text-xl font-extrabold text-zinc-900" id="workspace-store-name">Oz 1</h2>
                 </div>
                 <div class="flex items-center gap-3 text-xs text-zinc-600">
-                    <button type="button" onclick="saveAllData()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-1.5 rounded-full font-semibold shadow-xs border border-emerald-600 transition cursor-pointer">
+                    <button type="button" onclick="saveAllData(false)" class="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-1.5 rounded-full font-semibold shadow-xs border border-emerald-600 transition cursor-pointer">
                         💾 Save All
                     </button>
                     <span id="active-period-label" class="bg-white text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full font-semibold shadow-xs">October 2026</span>
@@ -1091,9 +1111,7 @@ html_code = """
             updateFinancialSummary();
 
             const formattedFileName = `${activeStore}_${selectedMonth}_${selectedYear}_Formatted_Inventory.csv`;
-            const csvContent = Papa.unparse(sortedRows);
 
-            // Automatically register file and check green1 box, then trigger save
             if (!storedFilesMap[spk]) storedFilesMap[spk] = {};
             storedFilesMap[spk]['green1'] = (storedFilesMap[spk]['green1'] || []).filter(f => !f.filename.includes('_Formatted_Inventory.csv'));
             storedFilesMap[spk]['green1'].push({ id: 'local_' + Date.now(), filename: formattedFileName });
@@ -1192,7 +1210,7 @@ html_code = """
             if (saveTimeout) clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
                 saveAllData(true);
-            }, 800);
+            }, 1200);
         }
 
         function saveAllData(isSilent = false) {
@@ -1247,7 +1265,6 @@ html_code = """
             const checklistData = { checkboxes: checkboxes, notes: notes, dates: dates, expenses: expenses };
             const inv = storeInventoryData[spk] || null;
 
-            // Trigger safe redirection to backend save handler
             const payload = {
                 spk: spk,
                 store: activeStore,
@@ -1260,28 +1277,16 @@ html_code = """
                 inventory_filename: inv ? inv.fileName : ""
             };
 
-            // Store in local storage as a robust instant cache
             try {
                 localStorage.setItem('oz_data_' + spk, JSON.stringify(payload));
             } catch(e) {}
 
-            // Send payload via query param reload or fetch to sync with Python state
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = '?action=save_state';
+            // Send via query params redirect to trigger Streamlit Python backend save
+            const payloadEncoded = encodeURIComponent(JSON.stringify(payload));
             
-            const hiddenField = document.createElement('input');
-            hiddenField.type = 'hidden';
-            hiddenField.name = 'payload_json';
-            hiddenField.value = JSON.stringify(payload);
-            form.appendChild(hiddenField);
-            
-            document.body.appendChild(form);
-            // Instead of disrupting typing with full form submission on every keystroke, use Beacon or fetch to Streamlit's runtime
             if (!isSilent) {
-                form.submit();
+                window.location.href = `?action=save_state&payload=${payloadEncoded}`;
             } else {
-                // Background sync simulation
                 const badge = document.getElementById('store-completion-badge');
                 if (badge) {
                     const checked = Object.values(checkboxes).filter(Boolean).length;
@@ -1486,7 +1491,7 @@ html_code = """
                 }
 
                 if (totalCogs === 0 && totalSales > 0) {
-                    totalCogs = totalSales * 0.80; // Estimated wholesale cost based on OCS wholesale ratios
+                    totalCogs = totalSales * 0.80;
                 }
 
                 const parseNum = (id) => {
@@ -1546,11 +1551,6 @@ html_code = """
 </body>
 </html>
 """
-
-# Handle saving payload when submitted from UI
-if st.query_params.get("action") == "save_state":
-    # Read payload from form post if available
-    pass
 
 # Safe string replacement for variables
 final_html = (
