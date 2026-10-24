@@ -2360,9 +2360,9 @@ HTML_CODE = r"""<!DOCTYPE html>
                     </div>
                 </div>
 
-                <div class="bg-emerald-900/40 rounded-xl border border-emerald-800 overflow-hidden">
+                <div class="bg-emerald-900/40 rounded-xl border border-emerald-800 max-h-[420px] overflow-y-auto overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs">
-                        <thead class="bg-emerald-900 text-emerald-300 border-b border-emerald-800">
+                        <thead class="bg-emerald-900 text-emerald-300 border-b border-emerald-800 sticky top-0">
                             <tr>
                                 <th class="p-3 font-semibold">Document / Folder Category</th>
                                 <th class="p-3 font-semibold">Status</th>
@@ -4288,25 +4288,6 @@ if _flash:
 render_hidden_tools()
 components.html(build_html_page(), height=1400, scrolling=False)
 
-# ----------------------------------------------------------------------------
-# Owner report: always shown at the bottom of the app (simple, readable, printable)
-# ----------------------------------------------------------------------------
-_AUTOSIZE = ("<script>function f(){try{window.frameElement.style.height=(document.documentElement.scrollHeight+24)+'px'}catch(e){}}"
-             "window.addEventListener('load',f);setTimeout(f,400);setTimeout(f,1500);</script>")
-try:
-    if get_record(spk):
-        _owner_html = build_owner_report(ctx["store"], ctx["month"], ctx["year"])
-        if _owner_html:
-            st.markdown(
-                f"<div style='margin:1.5rem 0 0.25rem 0'><h3 style='margin:0;color:#065f46'>📄 Owner Report — {htmllib.escape(ctx['store'])} · "
-                f"{htmllib.escape(ctx['month'])} {htmllib.escape(ctx['year'])}</h3>"
-                "<p style='margin:2px 0 0 0;color:#71717a;font-size:13px'>A plain-English summary of the month. It updates when you press "
-                "Save All to Cloud or upload a document. To keep a copy, use your browser's Print and choose Save as PDF.</p></div>",
-                unsafe_allow_html=True)
-            components.html(_owner_html.replace("</body>", _AUTOSIZE + "</body>"), height=2600, scrolling=False)
-except Exception as _ex:
-    log.exception("Could not build the owner report")
-    st.warning(f"The owner report could not be built: {type(_ex).__name__}: {_ex}")
 _keep = st.session_state.get("flash_keep")
 if _keep:
     getattr(st, _keep[0], st.info)(_keep[1])
