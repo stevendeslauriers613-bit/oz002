@@ -1435,7 +1435,7 @@ footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
 # ==========================================================================
 HTML_CODE = r"""<!DOCTYPE html>
 <html lang="en">
-<head><style>html,body{background:#f4f4f5 !important;margin:0}</style>
+<head><style>html,body{background:#f4f4f5 !important;margin:0;overflow:hidden !important}</style>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The OZ Store - Executive Financial Report & Package Manager</title>
@@ -3293,7 +3293,27 @@ HTML_CODE = r"""<!DOCTYPE html>
     </script>
 <script>
 (function(){
+  function tidy(){
+    try{
+      var d = window.parent.document;
+      if (!d.getElementById('oz-noscroll-style')){
+        var st = d.createElement('style'); st.id = 'oz-noscroll-style';
+        st.textContent = '.oz-noscroll{scrollbar-width:none !important}.oz-noscroll::-webkit-scrollbar{display:none !important;width:0 !important}';
+        d.head.appendChild(st);
+      }
+      var el = window.frameElement, list = [];
+      while (el && (el = el.parentElement) && el !== d.documentElement){
+        var cs = window.parent.getComputedStyle(el);
+        if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 2) list.push(el);
+      }
+      if (list.length){
+        list.forEach(function(e, i){ if (i === 0) e.classList.remove('oz-noscroll'); else e.classList.add('oz-noscroll'); });
+        d.documentElement.classList.add('oz-noscroll'); d.body.classList.add('oz-noscroll');
+      }
+    }catch(e){}
+  }
   function fit(){
+    tidy();
     try{
       var h = document.body.offsetHeight + 8;
       var fe = window.frameElement;
