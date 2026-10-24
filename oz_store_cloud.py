@@ -1447,7 +1447,7 @@ HTML_CODE = r"""<!DOCTYPE html>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 </head>
-<body class="bg-zinc-100 text-zinc-900 min-h-screen flex flex-col items-center py-8 px-4 font-sans">
+<body class="bg-zinc-100 text-zinc-900 flex flex-col items-center py-8 px-4 font-sans">
 
     <div class="max-w-7xl w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-zinc-200">
 
@@ -3195,7 +3195,22 @@ HTML_CODE = r"""<!DOCTYPE html>
 
         initApp();
     </script>
-</body>
+<script>
+(function(){
+  function fit(){
+    try{
+      var h = document.body.offsetHeight + 8;
+      var fe = window.frameElement;
+      if (fe && Math.abs((parseInt(fe.style.height)||0) - h) > 2) fe.style.height = h + 'px';
+    }catch(e){}
+  }
+  window.addEventListener('load', fit);
+  window.addEventListener('resize', fit);
+  try { new ResizeObserver(fit).observe(document.body); } catch(e) {}
+  setInterval(fit, 700);
+  fit();
+})();
+</script></body>
 </html>"""
 
 
@@ -4271,7 +4286,7 @@ if _flash:
         st.session_state.pop("flash_keep", None)
 
 render_hidden_tools()
-components.html(build_html_page(), height=3000, scrolling=True)
+components.html(build_html_page(), height=1400, scrolling=False)
 
 # ----------------------------------------------------------------------------
 # Owner report: always shown at the bottom of the app (simple, readable, printable)
