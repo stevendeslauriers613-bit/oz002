@@ -1814,14 +1814,511 @@ HTML_CODE = r"""<!DOCTYPE html>
                             </div>
 
                             <details class="md:col-span-2 lg:col-span-3 bg-white border border-zinc-200 rounded-xl overflow-hidden" id="receipts-section">
-                                <summary class="cursor-pointer select-none px-4 py-3 text-sm font-bold text-emerald-900 bg-emerald-50 hover:bg-emerald-100">🧾 Credit Card Receipts (physical receipts - photos or scans)</summary>
-                                <div class="p-4 space-y-2">
-                                    <p class="text-xs text-zinc-500">Take a photo or scan of each paper receipt and attach it here. They are kept with this store and month and included in the accountant package.</p>
-                                    <div class="flex gap-2">
-                                        <button type="button" onclick="openUploadPanel('receipts')" class="bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-medium py-1.5 px-3 rounded-lg border border-zinc-300 transition">📎 Browse & Upload Receipts</button>
-                                        <button type="button" onclick="clearUploadField('receipts')" class="bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold px-2 py-1.5 rounded-lg border border-red-200 transition" title="Remove all receipts">🗑️</button>
+                                <summary class="cursor-pointer select-none px-4 py-3 text-sm font-bold text-emerald-900 bg-emerald-50 hover:bg-emerald-100">🧾 Credit Card Receipts (physical receipts - photos or scans, #1 to #50)</summary>
+                                <div class="p-4 space-y-3">
+                                    <p class="text-xs text-zinc-500">Attach a photo or scan of each paper receipt in its numbered slot. They are kept with this store and month and included in the accountant package.</p>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #1</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt1')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt1')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt1" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #2</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt2')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt2')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt2" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #3</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt3')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt3')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt3" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #4</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt4')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt4')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt4" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #5</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt5')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt5')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt5" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #6</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt6')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt6')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt6" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #7</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt7')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt7')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt7" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #8</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt8')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt8')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt8" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #9</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt9')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt9')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt9" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #10</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt10')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt10')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt10" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #11</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt11')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt11')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt11" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #12</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt12')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt12')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt12" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #13</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt13')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt13')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt13" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #14</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt14')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt14')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt14" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #15</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt15')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt15')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt15" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #16</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt16')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt16')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt16" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #17</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt17')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt17')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt17" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #18</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt18')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt18')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt18" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #19</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt19')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt19')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt19" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #20</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt20')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt20')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt20" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #21</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt21')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt21')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt21" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #22</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt22')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt22')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt22" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #23</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt23')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt23')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt23" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #24</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt24')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt24')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt24" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #25</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt25')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt25')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt25" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #26</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt26')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt26')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt26" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #27</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt27')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt27')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt27" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #28</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt28')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt28')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt28" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #29</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt29')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt29')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt29" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #30</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt30')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt30')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt30" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #31</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt31')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt31')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt31" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #32</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt32')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt32')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt32" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #33</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt33')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt33')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt33" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #34</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt34')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt34')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt34" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #35</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt35')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt35')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt35" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #36</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt36')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt36')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt36" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #37</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt37')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt37')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt37" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #38</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt38')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt38')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt38" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #39</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt39')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt39')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt39" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #40</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt40')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt40')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt40" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #41</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt41')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt41')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt41" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #42</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt42')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt42')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt42" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #43</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt43')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt43')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt43" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #44</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt44')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt44')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt44" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #45</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt45')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt45')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt45" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #46</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt46')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt46')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt46" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #47</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt47')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt47')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt47" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #48</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt48')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt48')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt48" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #49</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt49')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt49')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt49" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
+                                        <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
+                                            <div class="flex justify-between items-center">
+                                                <span class="text-xs font-bold text-zinc-700">Receipt #50</span>
+                                                <div class="flex gap-1">
+                                                    <button type="button" onclick="openUploadPanel('rcpt50')" class="bg-white hover:bg-zinc-100 text-zinc-700 text-[11px] py-1 px-2.5 rounded border border-zinc-300">📎 Browse</button>
+                                                    <button type="button" onclick="clearUploadField('rcpt50')" class="bg-red-50 hover:bg-red-100 text-red-600 text-[11px] font-bold px-1.5 py-1 rounded border border-red-200 transition" title="Remove this receipt">🗑️</button>
+                                                </div>
+                                            </div>
+                                            <div id="files-rcpt50" class="flex flex-wrap gap-1.5 text-[11px] text-zinc-600">No file</div>
+                                        </div>
                                     </div>
-                                    <div id="files-receipts" class="flex flex-wrap gap-1.5 mt-1 text-[11px] text-zinc-600">No files uploaded</div>
                                 </div>
                             </details>
 
@@ -1892,7 +2389,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                 </div>
 
                 <!-- Monthly Financial Summary Report (Executive Owner View) -->
-                <div class="mt-6 bg-emerald-900/40 rounded-xl border border-emerald-800 p-5">
+                <div class="hidden" aria-hidden="true" style="display:none">
                     <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
                         <h4 class="text-base font-bold text-emerald-300">Monthly Financial Summary & Owner Expense Report</h4>
                         <button onclick="openOwnerReport()" class="bg-white hover:bg-emerald-50 text-emerald-800 text-xs font-bold px-3.5 py-2 rounded-xl border border-emerald-300 transition">📄 Owner Report (printable)</button>
@@ -2477,7 +2974,7 @@ HTML_CODE = r"""<!DOCTYPE html>
 
         function renderStoredFiles() {
             const spk = getSPK();
-            const cats = ['cooh', 'brinks', 'green1', 'green2', 'green3', 'mon1', 'mon2', 'ocs1', 'ocs2', 'chargebacks', 'gas1', 'gas2', 'receipts'];
+            const cats = ['cooh', 'brinks', 'green1', 'green2', 'green3', 'mon1', 'mon2', 'ocs1', 'ocs2', 'chargebacks', 'gas1', 'gas2', 'receipts', ...Array.from({length: 50}, (_, i) => 'rcpt' + (i + 1))];
 
             cats.forEach(cat => {
                 const box = document.getElementById(`files-${cat}`);
@@ -2794,7 +3291,7 @@ UPLOAD_CATS = [
     ("gas1", "Gas Cards: Details"),
     ("gas2", "Gas Cards: Summary"),
     ("receipts", "Credit Card Receipts"),
-]
+] + [(f"rcpt{_n}", f"Credit Card Receipt #{_n}") for _n in range(1, 51)]
 DOC_LABELS = dict(UPLOAD_CATS)
 
 DEFAULT_USERS = [
@@ -3183,7 +3680,7 @@ def compute_facts(docs: list):
     """Read every uploaded file. -> (sheet tables, generic table totals, one info dict per file)."""
     tables, facts, infos = {}, [], []
     for d in docs:
-        if d.get("auto") or d["key"].startswith("receipts:"):
+        if d.get("auto") or d["key"].startswith(("receipts:", "rcpt")):
             continue
         cat = d["key"].split(":")[0]
         info = dict(analyze_cached(cat, d["name"], d["data"]))
