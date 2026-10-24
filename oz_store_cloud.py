@@ -1435,7 +1435,7 @@ footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
 # ==========================================================================
 HTML_CODE = r"""<!DOCTYPE html>
 <html lang="en">
-<head><style>html,body{background:#f4f4f5 !important;margin:0;overflow:hidden !important}</style>
+<head><style>html,body{background:#f4f4f5 !important;margin:0}html{overflow-y:scroll !important;overflow-x:hidden !important;scrollbar-width:auto;scrollbar-color:#059669 #d4d4d8}::-webkit-scrollbar{width:22px}::-webkit-scrollbar-track{background:#d4d4d8}::-webkit-scrollbar-thumb{background:#059669;border-radius:11px;border:4px solid #d4d4d8;min-height:70px}::-webkit-scrollbar-thumb:hover{background:#047857}</style>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The OZ Store - Executive Financial Report & Package Manager</title>
@@ -3293,59 +3293,23 @@ HTML_CODE = r"""<!DOCTYPE html>
     </script>
 <script>
 (function(){
-  function tidy(){
-    return;
-    try{
-      var d = window.parent.document;
-      if (!d.getElementById('oz-noscroll-style')){
-        var st = d.createElement('style'); st.id = 'oz-noscroll-style';
-        st.textContent = '.oz-noscroll{scrollbar-width:none !important}.oz-noscroll::-webkit-scrollbar{display:none !important;width:0 !important}';
-        d.head.appendChild(st);
-      }
-      var el = window.frameElement, all = [], keeper = null;
-      while (el && (el = el.parentElement) && el !== d.documentElement){
-        var cs = window.parent.getComputedStyle(el);
-        if (/(auto|scroll|overlay)/.test(cs.overflowY)){
-          all.push(el);
-          if (!keeper && el.scrollHeight > el.clientHeight + 2) keeper = el;
-        }
-      }
-      if (keeper){
-        all.forEach(function(e){ if (e === keeper) e.classList.remove('oz-noscroll'); else e.classList.add('oz-noscroll'); });
-        d.documentElement.classList.add('oz-noscroll'); d.body.classList.add('oz-noscroll');
-      }
-    }catch(e){}
-  }
-  function dbg(){
-    try{
-      var d = window.parent.document, el = window.frameElement, out = [];
-      while (el && (el = el.parentElement)){
-        var cs = window.parent.getComputedStyle(el);
-        out.push((el.getAttribute('data-testid') || el.tagName.toLowerCase()) + ' [' + cs.overflowY + ' ' + el.scrollHeight + '/' + el.clientHeight + (el.classList.contains('oz-noscroll') ? ' hidden' : '') + ']');
-      }
-      var box = document.getElementById('oz-debug');
-      if (!box){ box = document.createElement('div'); box.id = 'oz-debug'; box.style.cssText = 'font:11px monospace;color:#71717a;padding:8px;word-break:break-all;width:100%'; document.body.appendChild(box); }
-      box.textContent = 'layers: ' + out.join(' < ');
-    }catch(e){}
-  }
+  // The page scrolls inside its own window, which is sized to fill the browser. Everything around it is locked,
+  // so there is exactly one scrollbar.
   function fit(){
-    tidy();
     try{
-      var h = document.body.offsetHeight + 8;
-      var fe = window.frameElement;
-      if (fe && Math.abs((parseInt(fe.style.height)||0) - h) > 2) fe.style.height = h + 'px';
+      var fe = window.frameElement, p = window.parent;
+      if (!fe) return;
+      var d = p.document;
+      var sc = [d.querySelector('[data-testid="stMain"]'), d.querySelector('section.main'), d.querySelector('[data-testid="stAppViewContainer"]')];
+      sc.forEach(function(e){ if (e && e.scrollTop) e.scrollTop = 0; });
+      if (d.scrollingElement && d.scrollingElement.scrollTop) d.scrollingElement.scrollTop = 0;
+      var top = fe.getBoundingClientRect().top;
+      var h = Math.max(320, Math.floor(p.innerHeight - top - 2));
+      if (Math.abs((parseInt(fe.style.height) || 0) - h) > 2) fe.style.height = h + 'px';
     }catch(e){}
-  }
-  function scroller(){
-    try{
-      var d = window.parent.document;
-      var c = [d.querySelector('[data-testid="stMain"]'), d.querySelector('section.main'), d.querySelector('[data-testid="stAppViewContainer"]'), d.scrollingElement];
-      for (var i=0;i<c.length;i++){ if (c[i] && c[i].scrollHeight > c[i].clientHeight + 5) return c[i]; }
-      return c[3] || c[0];
-    }catch(e){ return null; }
   }
   window.addEventListener('pagehide', function(){
-    try{ var s = scroller(); if (s) sessionStorage.setItem('oz_scroll', String(s.scrollTop)); }catch(e){}
+    try{ sessionStorage.setItem('oz_scroll', String(window.scrollY || document.documentElement.scrollTop || 0)); }catch(e){}
   });
   (function restore(){
     var y = 0;
@@ -3354,16 +3318,16 @@ HTML_CODE = r"""<!DOCTYPE html>
     var tries = 0;
     var t = setInterval(function(){
       tries++;
-      var s = scroller();
-      if (s){ s.scrollTop = y; if (Math.abs(s.scrollTop - y) < 3 || tries > 25){ clearInterval(t); try{ sessionStorage.removeItem('oz_scroll'); }catch(e){} } }
-      else if (tries > 25) clearInterval(t);
+      window.scrollTo(0, y);
+      var cur = window.scrollY || document.documentElement.scrollTop || 0;
+      if (Math.abs(cur - y) < 3 || tries > 25){ clearInterval(t); try{ sessionStorage.removeItem('oz_scroll'); }catch(e){} }
     }, 120);
   })();
   window.addEventListener('load', fit);
+  try { window.parent.addEventListener('resize', fit); } catch(e) {}
   window.addEventListener('resize', fit);
-  try { new ResizeObserver(fit).observe(document.body); } catch(e) {}
   setInterval(fit, 700);
-  [300, 1000, 2500].forEach(function(t){ setTimeout(tidy, t); });
+  [100, 400, 1000, 2500].forEach(function(t){ setTimeout(fit, t); });
   fit();
 })();
 </script></body>
@@ -4002,21 +3966,18 @@ def user_from_token(token: str):
 # Boot
 # ----------------------------------------------------------------------------
 def apply_global_css():
-    st.markdown("<style>.stApp,[data-testid='stAppViewContainer'],[data-testid='stMain'],.main{background:#f4f4f5 !important}"
+    st.markdown("<style>.stApp,[data-testid='stAppViewContainer']{background:#f4f4f5 !important}"
                 "[data-stale='true'],[data-stale='true'] *{opacity:1 !important;filter:none !important;transition:none !important}"
                 "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
                 "[data-testid='stHeader']{background:transparent !important}"
-                "iframe{background:#f4f4f5}"
-                "html,body,.stApp,[data-testid='stApp'],[data-testid='stAppViewContainer'],[data-testid='stMainBlockContainer'],.block-container"
-                "{overflow:hidden !important}"
-                "html,body,.stApp,[data-testid='stApp'],[data-testid='stAppViewContainer']{height:100vh !important;max-height:100vh !important}"
-                "[data-testid='stMain'],section.main{height:100vh !important;max-height:100vh !important;overflow-y:scroll !important;overflow-x:hidden !important;"
-                "scrollbar-width:auto !important;scrollbar-color:#059669 #d4d4d8 !important}"
-                "[data-testid='stMainBlockContainer'],.block-container{height:auto !important;max-height:none !important}"
-                "::-webkit-scrollbar{width:22px !important;height:22px !important}"
-                "::-webkit-scrollbar-track{background:#d4d4d8 !important}"
-                "::-webkit-scrollbar-thumb{background:#059669 !important;border-radius:11px;border:4px solid #d4d4d8 !important;min-height:70px}"
-                "::-webkit-scrollbar-thumb:hover{background:#047857 !important}</style>", unsafe_allow_html=True)
+                "iframe{background:#f4f4f5}</style>", unsafe_allow_html=True)
+
+
+def lock_page_scroll():
+    """Once signed in, only the app window scrolls: every layer around it is locked."""
+    st.markdown("<style>html,body,.stApp,[data-testid='stApp'],[data-testid='stAppViewContainer'],[data-testid='stMain'],"
+                "section.main,[data-testid='stMainBlockContainer'],.block-container{overflow:hidden !important}</style>",
+                unsafe_allow_html=True)
 
 
 init_db()
@@ -4514,8 +4475,9 @@ if _flash:
     else:
         st.session_state.pop("flash_keep", None)
 
+lock_page_scroll()
 render_hidden_tools()
-components.html(build_html_page(), height=3200, scrolling=False)
+components.html(build_html_page(), height=900, scrolling=False)
 
 _keep = st.session_state.get("flash_keep")
 if _keep:
