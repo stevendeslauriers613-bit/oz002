@@ -39,10 +39,9 @@ def get_dropbox_client():
     """Get authenticated Dropbox client."""
     try:
         import dropbox
-        if hasattr(st, "secrets") and "DROPBOX_ACCESS_TOKEN" in st.secrets:
-            token = st.secrets["DROPBOX_ACCESS_TOKEN"]
-            if token:
-                return dropbox.Dropbox(token)
+        token = st.secrets.get("DROPBOX_ACCESS_TOKEN") if hasattr(st, "secrets") else None
+        if token:
+            return dropbox.Dropbox(token)
         if os.path.exists(DROPBOX_CREDENTIALS_FILE):
             with open(DROPBOX_CREDENTIALS_FILE, "r") as f:
                 creds = json.load(f)
@@ -108,7 +107,7 @@ def sync_all_to_dropbox():
 
 
 def restore_from_dropbox_if_empty():
-    """If SQLite store_data is empty (e.g. after Streamlit Cloud reboot), restore from Dropbox."""
+    """If SQLite store_data is empty, restore from Dropbox."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM store_data")
@@ -163,7 +162,6 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS store_files (id INTEGER PRIMARY KEY AUTOINCREMENT, store_period_key TEXT, category TEXT, filename TEXT, filepath TEXT)"
     )
 
-    # Safe column migration in case an older table schema exists on the server
     cursor.execute("PRAGMA table_info(store_data)")
     existing_cols = [col[1] for col in cursor.fetchall()]
     required_cols = [
@@ -217,7 +215,7 @@ def get_user(username):
     return res
 
 
-# --- AUTHENTICATION STATE (WITH TOKEN PERSISTENCE SO RELOADS NEVER SIGN YOU OUT) ---
+# --- AUTHENTICATION STATE ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = None
@@ -226,7 +224,6 @@ if "logged_in" not in st.session_state:
 
 query_params = st.query_params
 
-# Restore login session automatically if auth_user is passed in URL
 if not st.session_state.logged_in and "auth_user" in query_params:
     u_param = query_params.get("auth_user", "").lower().strip()
     u_rec = get_user(u_param)
@@ -264,18 +261,6 @@ if "action" in query_params:
                     ),
                 )
                 conn.commit()
-                # Also sync formatted inventory file into store_files if inventory was uploaded
-                if payload.get("inventory_filename"):
-                    fmt_name = f"{spk}_Formatted_Inventory.csv"
-                    cursor.execute(
-                        "DELETE FROM store_files WHERE store_period_key = ? AND category = 'green1' AND filename LIKE '%_Formatted_Inventory.csv'",
-                        (spk,),
-                    )
-                    cursor.execute(
-                        "INSERT INTO store_files (store_period_key, category, filename, filepath) VALUES (?, 'green1', ?, '')",
-                        (spk, fmt_name),
-                    )
-                    conn.commit()
             except Exception as e:
                 print("Error saving state:", e)
         conn.close()
@@ -360,7 +345,6 @@ if not st.session_state.logged_in:
                     st.error("Invalid username or password.")
     st.stop()
 
-# Keep auth_user in query_params while logged in so iframe actions never lose session
 if st.session_state.username and st.query_params.get("auth_user") != st.session_state.username:
     st.query_params["auth_user"] = st.session_state.username
 
@@ -1054,10 +1038,9 @@ html_code = """
                 if(chk) chk.checked = false;
                 const note = document.getElementById(`${k}-note`);
                 if(note) note.value = "";
-                syncNotes(k, "");
+                syncNotes(k, "", false);
             });
 
-            // Prefer server database data, fall back to browser localStorage draft
             let data = persistentStoreData[spk];
             try {
                 const local = localStorage.getItem('oz_data_' + spk);
