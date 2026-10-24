@@ -1814,6 +1814,8 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
+APP_VERSION = "2026-10-24 r3"
+USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
 MAX_UPLOAD_MB = 25
@@ -1965,7 +1967,14 @@ def init_db():
                     "checklist_json", "inventory_json", "inventory_filename"]:
             if col not in existing:
                 cur.execute(f"ALTER TABLE store_data ADD COLUMN {col} TEXT")
-        if cur.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+        # One-time repair: an old database may hold users/passwords nobody can log in with.
+        cur.execute("CREATE TABLE IF NOT EXISTS app_meta (k TEXT PRIMARY KEY, v TEXT)")
+        done = cur.execute("SELECT v FROM app_meta WHERE k = ?", (USERS_RESET_MARK,)).fetchone()
+        if not done:
+            cur.execute("DELETE FROM users")
+            cur.executemany("INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?)", DEFAULT_USERS)
+            cur.execute("INSERT OR REPLACE INTO app_meta VALUES (?, '1')", (USERS_RESET_MARK,))
+        elif cur.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
             cur.executemany("INSERT OR IGNORE INTO users VALUES (?, ?, ?, ?)",
                             load_users_from_dropbox() or DEFAULT_USERS)
         conn.commit()
@@ -2326,14 +2335,15 @@ if not st.session_state.logged_in:
             unsafe_allow_html=True,
         )
 
+        st.caption(f"App version {APP_VERSION}")
         with st.form("login_form"):
             username_input = st.text_input("Username")
             password_input = st.text_input("Password", type="password")
             submit = st.form_submit_button("Sign In", **STRETCH)
 
             if submit:
-                user_record = get_user(username_input)
-                if user_record and hmac.compare_digest(str(user_record[2]).encode(), password_input.encode()):
+                user_record = get_user(username_input.strip())
+                if user_record and hmac.compare_digest(str(user_record[2]).encode(), password_input.strip().encode()):
                     clean_u = username_input.lower().strip()
                     _log_in(clean_u, user_record[0], user_record[1])
                     st.query_params.clear()
