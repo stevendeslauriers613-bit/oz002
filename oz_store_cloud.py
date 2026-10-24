@@ -1435,7 +1435,7 @@ footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
 # ==========================================================================
 HTML_CODE = r"""<!DOCTYPE html>
 <html lang="en">
-<head>
+<head><style>html,body{background:#f4f4f5 !important;margin:0}</style>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The OZ Store - Executive Financial Report & Package Manager</title>
@@ -1603,7 +1603,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                             </button>
                         </div>
 
-                        <div class="bg-white rounded-lg border border-zinc-200 overflow-hidden max-h-56 overflow-y-auto mb-4 shadow-xs">
+                        <div class="bg-white rounded-lg border border-zinc-200 overflow-hidden  mb-4 shadow-xs">
                             <table class="w-full text-left border-collapse text-[11px]">
                                 <thead class="bg-emerald-50 text-emerald-900 sticky top-0 z-10 border-b border-emerald-200">
                                     <tr id="table-header"><th class="p-2 font-semibold">Category</th><th class="p-2 font-semibold">Opening</th><th class="p-2 font-semibold">Sold</th><th class="p-2 font-semibold">Closing</th></tr>
@@ -1628,7 +1628,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                         </div>
                         <p class="text-zinc-600 text-xs mb-4">Input cash on hand, browse supporting files, and add notes. Click <b>Save All to Cloud</b> when ready.</p>
 
-                        <div class="space-y-3.5 max-h-[480px] overflow-y-auto pr-2" id="checklist-container">
+                        <div class="space-y-3.5  pr-2" id="checklist-container">
 
                             <!-- 1. Cash on Hand -->
                             <div class="bg-white p-3 rounded-xl border border-zinc-200 space-y-2 shadow-xs">
@@ -1814,7 +1814,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                             <details class="md:col-span-2 lg:col-span-3 bg-white border border-zinc-200 rounded-xl overflow-hidden" id="receipts-section">
                                 <summary class="cursor-pointer select-none px-4 py-3 text-sm font-bold text-emerald-900 bg-emerald-50 hover:bg-emerald-100">🧾 Credit Card Receipts (physical receipts - photos or scans, #1 to #50)</summary>
                                 <div class="p-4 space-y-3">
-                                    <p class="text-xs text-zinc-500">Attach a photo or scan of each paper receipt in its numbered slot. They are kept with this store and month and included in the accountant package.</p>
+                                    <p class="text-xs text-zinc-500">Press Browse on any slot and pick one or many receipt photos or scans; they fill the next empty numbered slots in order (use the × on a chip to free a slot). They are kept with this store and month and included in the accountant package.</p>
                                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                         <div class="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50 space-y-1">
                                             <div class="flex justify-between items-center">
@@ -2358,7 +2358,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                     </div>
                 </div>
 
-                <div class="bg-emerald-900/40 rounded-xl border border-emerald-800 max-h-[420px] overflow-y-auto overflow-x-auto">
+                <div class="bg-emerald-900/40 rounded-xl border border-emerald-800 overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs">
                         <thead class="bg-emerald-900 text-emerald-300 border-b border-emerald-800 sticky top-0">
                             <tr>
@@ -2424,7 +2424,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                         <button type="button" onclick="generateExpenseReport(true)" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-xl border border-emerald-400 transition">📊 Generate Report</button>
                         <button type="button" onclick="downloadDetailedReport()" class="bg-white hover:bg-emerald-50 text-emerald-800 text-sm font-bold px-4 py-2 rounded-xl border border-emerald-300 transition">⬇️ Download Detailed Accounting Report</button>
                     </div>
-                    <p class="text-[11px] text-emerald-200/60">Expenses are saved with the store and month when you press Generate Report or Download. The detailed report is an Excel file built from every file uploaded.</p>
+                    <p class="text-[11px] text-emerald-200/60">Your entries are kept on this device as you type and are saved to the cloud when you press Save All to Cloud or Download. The detailed report is an Excel file built from every file uploaded.</p>
                     <div id="expense-report" class="mt-4"></div>
                 </div>
             </div>
@@ -2482,6 +2482,7 @@ HTML_CODE = r"""<!DOCTYPE html>
         function openUploadPanel(cat) {
             // Opens the computer's file picker through an invisible uploader (nothing is shown on screen).
             saveLocalOnly();
+            if (String(cat).indexOf('rcpt') === 0) cat = 'receipts';
             try {
                 const d = window.parent.document;
                 let inp = d.querySelector('.st-key-up_' + cat + ' input[type=file]');
@@ -3177,6 +3178,50 @@ HTML_CODE = r"""<!DOCTYPE html>
                      expPct: sales > 0 ? totalExp / sales * 100 : 0, noi, opMargin: sales > 0 ? noi / sales * 100 : 0, salesSrc, cogsSrc };
         }
 
+
+        const INFO_COLORS = ['#059669','#d97706','#2563eb','#7c3aed','#db2777','#0891b2','#65a30d','#dc2626','#475569','#ca8a04'];
+        function infographicHtml(f) {
+            const sales = f.sales;
+            const tile = (label, val, sub, cls) => '<div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3"><div class="text-[11px] text-zinc-500">' + label + '</div><div class="text-lg font-bold ' + cls + '">' + val + '</div><div class="text-[11px] text-zinc-500">' + sub + '</div></div>';
+            const tiles = '<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">' +
+                tile('Sales', moneyFmt(f.sales), 'for the month', 'text-zinc-900') +
+                tile('Gross profit', moneyFmt(f.gross), pctFmt(f.grossMargin) + ' margin', f.gross < 0 ? 'text-red-600' : 'text-emerald-700') +
+                tile('Total expenses', moneyFmt(f.totalExp), pctFmt(f.expPct) + ' of sales', 'text-amber-700') +
+                tile('Net operating income', moneyFmt(f.noi), pctFmt(f.opMargin) + ' margin', f.noi < 0 ? 'text-red-600' : 'text-emerald-700') + '</div>';
+            // 1) where each sales dollar went
+            let bar = '';
+            if (sales > 0) {
+                const cp = Math.max(0, f.cogs / sales * 100), ep = Math.max(0, f.totalExp / sales * 100);
+                let pp = Math.max(0, 100 - cp - ep);
+                const tot = cp + ep + pp;
+                const seg = (p, color, label) => p > 0 ? '<div style="width:' + (p / tot * 100) + '%;background:' + color + '" class="h-full flex items-center justify-center text-[11px] font-bold text-white overflow-hidden whitespace-nowrap" title="' + label + '">' + (p >= 8 ? p.toFixed(0) + '%' : '') + '</div>' : '';
+                bar = '<div class="mb-4"><div class="text-xs font-bold text-zinc-700 mb-1">Where each $1 of sales went</div>' +
+                    '<div class="flex h-8 rounded-lg overflow-hidden border border-zinc-200">' + seg(cp, '#d97706', 'Cost of goods') + seg(ep, '#2563eb', 'Expenses') + seg(pp, '#059669', 'Profit') + '</div>' +
+                    '<div class="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-[11px] text-zinc-600">' +
+                    '<span><span class="inline-block w-2.5 h-2.5 rounded-sm mr-1" style="background:#d97706"></span>Cost of goods ' + cp.toFixed(1) + '%</span>' +
+                    '<span><span class="inline-block w-2.5 h-2.5 rounded-sm mr-1" style="background:#2563eb"></span>Expenses ' + ep.toFixed(1) + '%</span>' +
+                    '<span><span class="inline-block w-2.5 h-2.5 rounded-sm mr-1" style="background:#059669"></span>' + (f.noi >= 0 ? 'Profit ' + (f.noi / sales * 100).toFixed(1) + '%' : 'Loss ' + (-f.noi / sales * 100).toFixed(1) + '% (expenses and cost exceed sales)') + '</span></div></div>';
+            }
+            // 2) expense breakdown donut
+            const parts = f.lines.filter(x => x.amount > 0);
+            let donut = '';
+            if (parts.length) {
+                const R = 40, C = 2 * Math.PI * R, total = parts.reduce((a, x) => a + x.amount, 0);
+                let off = 0;
+                const arcs = parts.map((x, i) => {
+                    const len = x.amount / total * C;
+                    const s = '<circle cx="60" cy="60" r="' + R + '" fill="none" stroke="' + INFO_COLORS[i % INFO_COLORS.length] + '" stroke-width="22" stroke-dasharray="' + len + ' ' + (C - len) + '" stroke-dashoffset="' + (-off) + '" transform="rotate(-90 60 60)"><title>' + esc(x.label) + ' ' + moneyFmt(x.amount) + '</title></circle>';
+                    off += len; return s;
+                }).join('');
+                const legend = parts.map((x, i) => '<div class="flex items-center justify-between gap-3 text-xs"><span class="flex items-center"><span class="inline-block w-2.5 h-2.5 rounded-sm mr-1.5" style="background:' + INFO_COLORS[i % INFO_COLORS.length] + '"></span>' + esc(x.label) + '</span><span class="text-zinc-600 whitespace-nowrap">' + moneyFmt(x.amount) + ' &middot; ' + (x.amount / total * 100).toFixed(0) + '%</span></div>').join('');
+                donut = '<div class="mb-4"><div class="text-xs font-bold text-zinc-700 mb-2">Where the expenses went</div><div class="flex flex-wrap items-center gap-4">' +
+                    '<svg viewBox="0 0 120 120" width="150" height="150" role="img" aria-label="Expense breakdown">' + arcs +
+                    '<text x="60" y="57" text-anchor="middle" font-size="8" fill="#71717a">Total</text><text x="60" y="68" text-anchor="middle" font-size="9" font-weight="bold" fill="#18181b">' + moneyFmt(total) + '</text></svg>' +
+                    '<div class="flex-1 min-w-[220px] space-y-1">' + legend + '</div></div></div>';
+            }
+            return tiles + bar + donut;
+        }
+
         function generateExpenseReport(userClick) {
             const box = document.getElementById('expense-report');
             if (!box) return;
@@ -3190,7 +3235,7 @@ HTML_CODE = r"""<!DOCTYPE html>
             const noData = f.sales === 0 ? '<p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3">No sales figures were found for this store and month yet. Upload the Greenline Financials report (and the others) in the checklist above, tick them and press Save All to Cloud.</p>' : '';
             box.innerHTML = '<div class="bg-white text-zinc-900 rounded-xl p-5 shadow">' +
                 '<h5 class="text-base font-bold text-emerald-900">Expense Report - ' + esc(activeStore) + ' &middot; ' + esc(selectedMonth) + ' ' + esc(selectedYear) + '</h5>' +
-                '<p class="text-xs text-zinc-500 mb-3">Simple monthly summary with margins</p>' + noData +
+                '<p class="text-xs text-zinc-500 mb-3">Simple monthly summary with margins</p>' + noData + infographicHtml(f) +
                 '<table class="w-full text-sm"><tbody>' +
                 row('Sales', moneyFmt(f.sales), 'font-bold text-zinc-900', f.salesSrc) +
                 row('Cost of goods sold', moneyFmt(-f.cogs), 'text-zinc-800', f.cogsSrc) +
@@ -3207,8 +3252,7 @@ HTML_CODE = r"""<!DOCTYPE html>
             try { renderDocFacts(moneyFmt); } catch(e) {}
             if (userClick) {
                 saveLocalOnly();
-                try { sessionStorage.setItem('oz_exp_scroll', '1'); } catch(e) {}
-                try { saveAllData(true); } catch(e) {}
+                setTimeout(() => { try { box.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch(e) {} }, 100);
             }
         }
 
@@ -3256,6 +3300,29 @@ HTML_CODE = r"""<!DOCTYPE html>
       if (fe && Math.abs((parseInt(fe.style.height)||0) - h) > 2) fe.style.height = h + 'px';
     }catch(e){}
   }
+  function scroller(){
+    try{
+      var d = window.parent.document;
+      var c = [d.querySelector('[data-testid="stMain"]'), d.querySelector('section.main'), d.querySelector('[data-testid="stAppViewContainer"]'), d.scrollingElement];
+      for (var i=0;i<c.length;i++){ if (c[i] && c[i].scrollHeight > c[i].clientHeight + 5) return c[i]; }
+      return c[0] || c[3];
+    }catch(e){ return null; }
+  }
+  window.addEventListener('pagehide', function(){
+    try{ var s = scroller(); if (s) sessionStorage.setItem('oz_scroll', String(s.scrollTop)); }catch(e){}
+  });
+  (function restore(){
+    var y = 0;
+    try{ y = parseInt(sessionStorage.getItem('oz_scroll') || '0') || 0; }catch(e){}
+    if (!y) return;
+    var tries = 0;
+    var t = setInterval(function(){
+      tries++;
+      var s = scroller();
+      if (s){ s.scrollTop = y; if (Math.abs(s.scrollTop - y) < 3 || tries > 25){ clearInterval(t); try{ sessionStorage.removeItem('oz_scroll'); }catch(e){} } }
+      else if (tries > 25) clearInterval(t);
+    }, 120);
+  })();
   window.addEventListener('load', fit);
   window.addEventListener('resize', fit);
   try { new ResizeObserver(fit).observe(document.body); } catch(e) {}
@@ -4184,17 +4251,30 @@ def process_hidden_uploads(chosen):
         if not files:
             continue
         ok_n, problems, metas = 0, [], []
+        free_slots = []
+        if cat == "receipts":
+            _have = ((get_record(spk) or {}).get("checklist_json") or {}).get("files", {})
+            free_slots = [f"rcpt{n}" for n in range(1, 51) if not _have.get(f"rcpt{n}")]
+        by_cat = {}
         for f in files:
             if f.size > MAX_UPLOAD_MB * 1024 * 1024:
                 problems.append(f"{f.name} is over {MAX_UPLOAD_MB} MB.")
                 continue
-            meta, warn = store_file(spk, cat, f.name, f.getvalue())
+            target = cat
+            if cat == "receipts":
+                if not free_slots:
+                    problems.append(f"{f.name}: all 50 receipt slots are full.")
+                    continue
+                target = free_slots.pop(0)
+            meta, warn = store_file(spk, target, f.name, f.getvalue())
             metas.append(meta)
+            by_cat.setdefault(target, []).append(meta)
             ok_n += 1
             if warn:
                 problems.append(warn)
         if metas:
-            add_files_to_record(spk, cat, metas)
+            for _t, _m in by_cat.items():
+                add_files_to_record(spk, _t, _m)
             if read_file_bytes(metas[0]) is None:
                 problems.append("The file was saved but could not be read back from storage: "
                                 + _READ_ERR.get(metas[0].get("id"), "unknown error"))
@@ -4213,12 +4293,19 @@ def render_hidden_tools():
     """Invisible controls driven by the page's buttons. Nothing here is ever shown on screen."""
     store, month, year = ctx["store"], ctx["month"], ctx["year"]
     ver = st.session_state.setdefault("upl_ver", 0)
+    st.markdown("<style>.stApp,[data-testid='stAppViewContainer'],[data-testid='stMain'],.main{background:#f4f4f5 !important}"
+                "[data-stale='true'],[data-stale='true'] *{opacity:1 !important;filter:none !important;transition:none !important}"
+                "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
+                "[data-testid='stHeader']{background:transparent !important}"
+                "iframe{background:#f4f4f5}</style>", unsafe_allow_html=True)
     st.markdown("<style>.st-key-oz_hidden_tools{position:fixed !important;left:-10000px !important;top:0 !important;"
                 "width:1px !important;height:1px !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}"
                 "</style>", unsafe_allow_html=True)
     with st.container(key="oz_hidden_tools"):
         chosen = {}
         for cat, _label in UPLOAD_CATS:
+            if cat.startswith("rcpt"):
+                continue
             with st.container(key=f"up_{cat}"):
                 chosen[cat] = st.file_uploader(DOC_LABELS[cat], accept_multiple_files=True, key=f"upl_{cat}_{ver}",
                                                label_visibility="collapsed")
@@ -4344,7 +4431,7 @@ if _flash:
         st.session_state.pop("flash_keep", None)
 
 render_hidden_tools()
-components.html(build_html_page(), height=1400, scrolling=False)
+components.html(build_html_page(), height=3200, scrolling=False)
 
 _keep = st.session_state.get("flash_keep")
 if _keep:
