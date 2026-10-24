@@ -1435,7 +1435,7 @@ footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
 # ==========================================================================
 HTML_CODE = r"""<!DOCTYPE html>
 <html lang="en">
-<head><style>html,body{background:#f4f4f5 !important;margin:0}html{overflow-y:scroll !important;overflow-x:hidden !important;scrollbar-width:auto;scrollbar-color:#059669 #d4d4d8}::-webkit-scrollbar{width:22px}::-webkit-scrollbar-track{background:#d4d4d8}::-webkit-scrollbar-thumb{background:#059669;border-radius:11px;border:4px solid #d4d4d8;min-height:70px}::-webkit-scrollbar-thumb:hover{background:#047857}</style>
+<head><style>html,body{background:#f4f4f5 !important;margin:0;overflow:hidden !important}</style>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The OZ Store - Executive Financial Report & Package Manager</title>
@@ -3293,42 +3293,58 @@ HTML_CODE = r"""<!DOCTYPE html>
     </script>
 <script>
 (function(){
-  // The page scrolls inside its own window, which is sized to fill the browser. Everything around it is locked,
-  // so there is exactly one scrollbar.
+  // One scrollbar: Streamlit's own page scroller (stMain). This page never scrolls by itself;
+  // instead it grows to its full height, and so does the Streamlit box that holds it
+  // (Streamlit gives that box a fixed height with its own scrollbar, which caused the extra bars).
+  function mainScroller(){
+    try{
+      var d = window.parent.document;
+      return d.querySelector('[data-testid="stMain"]') || d.querySelector('section.main') || d.scrollingElement;
+    }catch(e){ return null; }
+  }
+  function contentHeight(){
+    var b = document.body;
+    return Math.ceil(Math.max(b.scrollHeight, b.offsetHeight, b.getBoundingClientRect().height)) + 2;
+  }
   function fit(){
     try{
-      var fe = window.frameElement, p = window.parent;
+      var fe = window.frameElement;
       if (!fe) return;
-      var d = p.document;
-      var sc = [d.querySelector('[data-testid="stMain"]'), d.querySelector('section.main'), d.querySelector('[data-testid="stAppViewContainer"]')];
-      sc.forEach(function(e){ if (e && e.scrollTop) e.scrollTop = 0; });
-      if (d.scrollingElement && d.scrollingElement.scrollTop) d.scrollingElement.scrollTop = 0;
-      var top = fe.getBoundingClientRect().top;
-      var h = Math.max(320, Math.floor(p.innerHeight - top - 2));
-      if (Math.abs((parseInt(fe.style.height) || 0) - h) > 2) fe.style.height = h + 'px';
-      d.documentElement.classList.add('oz-locked');
+      var px = contentHeight() + 'px';
+      if (fe.style.height !== px) fe.style.height = px;
+      fe.style.minHeight = '0'; fe.style.maxHeight = 'none';
+      var el = fe.parentElement, n = 0;
+      while (el && n < 4){
+        var tid = el.getAttribute('data-testid') || '';
+        if (tid === 'stVerticalBlock' || tid === 'stMainBlockContainer' || tid === 'stMain' || el.tagName === 'BODY') break;
+        if (el.style.height !== px) el.style.height = px;
+        el.style.minHeight = '0'; el.style.maxHeight = 'none'; el.style.overflow = 'visible';
+        if (tid === 'stElementContainer' || (el.classList && el.classList.contains('element-container'))) break;
+        el = el.parentElement; n++;
+      }
     }catch(e){}
   }
+  function key(){ try { return 'oz_scroll_' + (typeof getSPK === 'function' ? getSPK() : ''); } catch(e){ return 'oz_scroll_'; } }
   window.addEventListener('pagehide', function(){
-    try{ sessionStorage.setItem('oz_scroll', String(window.scrollY || document.documentElement.scrollTop || 0)); }catch(e){}
+    try{ var s = mainScroller(); if (s) sessionStorage.setItem(key(), String(s.scrollTop)); }catch(e){}
   });
-  (function restore(){
+  function restore(){
     var y = 0;
-    try{ y = parseInt(sessionStorage.getItem('oz_scroll') || '0') || 0; }catch(e){}
+    try{ y = parseInt(sessionStorage.getItem(key()) || '0') || 0; sessionStorage.removeItem(key()); }catch(e){}
     if (!y) return;
     var tries = 0;
     var t = setInterval(function(){
       tries++;
-      window.scrollTo(0, y);
-      var cur = window.scrollY || document.documentElement.scrollTop || 0;
-      if (Math.abs(cur - y) < 3 || tries > 25){ clearInterval(t); try{ sessionStorage.removeItem('oz_scroll'); }catch(e){} }
-    }, 120);
-  })();
-  window.addEventListener('load', fit);
-  try { window.parent.addEventListener('resize', fit); } catch(e) {}
-  window.addEventListener('resize', fit);
-  setInterval(fit, 700);
-  [100, 400, 1000, 2500].forEach(function(t){ setTimeout(fit, t); });
+      fit();
+      var s = mainScroller();
+      if (s){ s.scrollTop = y; if (Math.abs(s.scrollTop - y) < 3 || tries > 30) clearInterval(t); }
+      else if (tries > 30) clearInterval(t);
+    }, 100);
+  }
+  window.addEventListener('load', function(){ fit(); restore(); });
+  try { new ResizeObserver(fit).observe(document.body); } catch(e) {}
+  setInterval(fit, 600);
+  [50, 300, 1000, 2500].forEach(function(t){ setTimeout(fit, t); });
   fit();
 })();
 </script></body>
@@ -3401,7 +3417,7 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
-APP_VERSION = "2026-10-24 r6"
+APP_VERSION = "2026-10-24 r7 (one scrollbar)"
 USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
@@ -3967,19 +3983,22 @@ def user_from_token(token: str):
 # Boot
 # ----------------------------------------------------------------------------
 def apply_global_css():
-    st.markdown("<style>.stApp,[data-testid='stAppViewContainer']{background:#f4f4f5 !important}"
-                "[data-stale='true'],[data-stale='true'] *{opacity:1 !important;filter:none !important;transition:none !important}"
-                "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
-                "[data-testid='stHeader']{background:transparent !important}"
-                "iframe{background:#f4f4f5}</style>", unsafe_allow_html=True)
-
-
-def lock_page_scroll():
-    """Once signed in, only the app window scrolls: every layer around it is locked."""
-    sels = ["html.oz-locked", "html.oz-locked body", "html.oz-locked .stApp", "html.oz-locked [data-testid='stApp']",
-            "html.oz-locked [data-testid='stAppViewContainer']", "html.oz-locked [data-testid='stMain']",
-            "html.oz-locked section.main", "html.oz-locked [data-testid='stMainBlockContainer']", "html.oz-locked .block-container"]
-    st.markdown("<style>" + ",".join(sels) + "{overflow:hidden !important}</style>", unsafe_allow_html=True)
+    st.markdown(
+        "<style>"
+        ".stApp,[data-testid='stAppViewContainer']{background:#f4f4f5 !important}"
+        "[data-stale='true'],[data-stale='true'] *{opacity:1 !important;filter:none !important;transition:none !important}"
+        "[data-testid='stStatusWidget'],[data-testid='stDecoration'],[data-testid='stAppDeployButton']{display:none !important}"
+        "[data-testid='stHeader']{background:transparent !important}"
+        "iframe{background:#f4f4f5}"
+        # Streamlit gives an embedded page a fixed-height box with its own scrollbar; never let that box scroll.
+        "[data-testid='stElementContainer']:has(> iframe),.element-container:has(> iframe){overflow:visible !important}"
+        # The single page scrollbar (Streamlit's main area): wider and easy to grab.
+        "[data-testid='stMain']::-webkit-scrollbar{width:18px}"
+        "[data-testid='stMain']::-webkit-scrollbar-track{background:#e4e4e7}"
+        "[data-testid='stMain']::-webkit-scrollbar-thumb{background:#059669;border-radius:9px;border:3px solid #e4e4e7;min-height:60px}"
+        "[data-testid='stMain']::-webkit-scrollbar-thumb:hover{background:#047857}"
+        "@supports not selector(::-webkit-scrollbar){[data-testid='stMain']{scrollbar-color:#059669 #e4e4e7}}"
+        "</style>", unsafe_allow_html=True)
 
 
 init_db()
@@ -4477,9 +4496,8 @@ if _flash:
     else:
         st.session_state.pop("flash_keep", None)
 
-lock_page_scroll()
 render_hidden_tools()
-components.html(build_html_page(), height=600, scrolling=False)
+components.html(build_html_page(), height=1200, scrolling=False)
 
 _keep = st.session_state.get("flash_keep")
 if _keep:
