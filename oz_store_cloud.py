@@ -909,6 +909,42 @@ def _chk(label, a, b, tol_pct=1.0, tol_abs=25.0, a_name="", b_name=""):
     return {"label": label, "a": a, "b": b, "diff": diff, "ok": ok, "a_name": a_name, "b_name": b_name}
 
 
+
+def cash_consolidation(tender: dict, moneris: list, cooh_now, prev_cooh, cash_deposited, prev_label: str = "") -> dict:
+    """Ties the money taken (Greenline payment types) to the bank deposits and the cash on hand."""
+    low = {str(k).casefold(): (k, v) for k, v in (tender or {}).items()}
+    cash_key = next((k for k in low if "cash" in k), None)
+    cash_sales = low[cash_key][1] if cash_key else 0.0
+    cards, used = [], {cash_key}
+    for m in moneris or []:
+        key = "moneris" if m["cat"] == "mon1" else "online"
+        gl = low.get(key, (None, None))[1]
+        used.add(key)
+        cards.append({"label": "In-store cards (Moneris)" if m["cat"] == "mon1" else "Online (Moneris)", "greenline": gl,
+                      "moneris_net": m["net"], "diff": (gl - m["net"]) if gl is not None else None,
+                      "fees": m["fees"], "deposited": m["deposits"]})
+    for key in ("moneris", "online"):
+        if key in low and key not in [("moneris" if c["label"].startswith("In-store") else "online") for c in cards]:
+            cards.append({"label": low[key][0] + " (no Moneris statement uploaded)", "greenline": low[key][1], "moneris_net": None,
+                          "diff": None, "fees": None, "deposited": None})
+    other = [(low[k][0], low[k][1]) for k in low if k not in used and k not in ("moneris", "online")]
+    opening = prev_cooh if prev_cooh is not None else 0.0
+    expected = opening + cash_sales - (cash_deposited or 0.0)
+    return {
+        "receipts": [(v[0], v[1]) for v in low.values()], "total_receipts": sum(v[1] for v in low.values()),
+        "cards": cards, "other": other,
+        "cash": {"opening": prev_cooh, "opening_label": prev_label, "sales": cash_sales, "deposited": cash_deposited,
+                 "expected": expected if cash_deposited is not None else None, "counted": cooh_now,
+                 "over_short": (cooh_now - expected) if (cooh_now is not None and cash_deposited is not None) else None,
+                 "to_deposit": (opening + cash_sales - cooh_now) if cooh_now is not None else None},
+    }
+
+
+def _money_or_none(v):
+    s = str(v if v is not None else "").strip()
+    return parse_money(s) if s else None
+
+
 def build_income(payload: dict) -> dict:
     infos = payload.get("docs_info") or []
     by = lambda kind: [i for i in infos if i["kind"] == kind]
@@ -990,6 +1026,9 @@ def build_income(payload: dict) -> dict:
     inc["daily"] = sorted(d for i in gl for d in i["g"]["daily"])
     inc["fuel"] = {"amount": fuel, "litres": lit}
     inc["moneris"] = [{"cat": i["cat"], **i["m"]} for i in mon]
+    inc["cash"] = cash_consolidation(tender, inc["moneris"], _money_or_none(payload.get("cooh_text")),
+                                     payload.get("prev_cooh"), _money_or_none((payload.get("expenses") or {}).get("cashdep")),
+                                     payload.get("prev_label", ""))
 
     # ---- cross-checks between the files
     ck = inc["checks"]
@@ -1029,11 +1068,72 @@ def financials(payload: dict) -> dict:
     }
 
 
+
+def _cash_sheet(wb, store, period, cc, used):
+    """Cash Consolidation sheet: payment types -> deposits -> cash on hand."""
+    ws = wb.create_sheet(_sheet_name("Cash Consolidation", used), 2)
+    ws["A1"] = f"Cash Consolidation - {store} - {period}"
+    ws["A1"].font = Font(name=_FONT, bold=True, size=14, color="065F46")
+    ws["A2"] = "Money taken in (Greenline payment types, incl. HST) matched to bank deposits and the cash counted on hand."
+    ws["A2"].font = Font(name=_FONT, size=9, italic=True, color="71717A")
+    r = [4]
+
+    def head(t, cols):
+        _put(ws, r[0], 1, t, bold=True)
+        r[0] += 1
+        for j, h in enumerate(cols, 1):
+            _put(ws, r[0], j, h, bold=True, fill=_TOT_FILL)
+        r[0] += 1
+
+    def row(vals, bold=False, fill=None):
+        for j, v in enumerate(vals, 1):
+            _put(ws, r[0], j, "" if v is None else v, bold=bold, fill=fill)
+        r[0] += 1
+
+    head("1. MONEY TAKEN IN BY PAYMENT TYPE (Greenline)", ["Payment type", "Amount"])
+    for k, v in cc["receipts"]:
+        row([k, v])
+    row(["Total taken in", cc["total_receipts"]], bold=True, fill=_TOT_FILL)
+    r[0] += 1
+    if cc["cards"]:
+        head("2. CARD PAYMENTS -> BANK DEPOSITS (Moneris)",
+             ["Card type", "Recorded in Greenline", "Moneris net sales", "Difference", "Moneris fees", "Deposited to bank"])
+        for c in cc["cards"]:
+            row([c["label"], c["greenline"], c["moneris_net"], c["diff"], c["fees"], c["deposited"]],
+                fill=_BAD_FILL if (c["diff"] is not None and abs(c["diff"]) > max(50.0, abs(c["moneris_net"] or 0) * 0.01)) else None)
+        r[0] += 1
+    c = cc["cash"]
+    head("3. CASH", ["Item", "Amount", "Note"])
+    row(["Cash on hand at start of month", c["opening"], ("Counted at the end of " + c["opening_label"]) if c["opening"] is not None
+         else "No cash count saved for " + (c["opening_label"] or "last month") + " - treated as 0"])
+    row(["+ Cash sales", c["sales"], "Greenline payment types"])
+    if c["deposited"] is not None:
+        row(["- Cash deposited to bank (Brinks)", -c["deposited"], "Total deposits entered in the Brinks Book section"])
+        row(["= Cash that should be on hand", c["expected"], ""], bold=True)
+        row(["Cash on hand counted", c["counted"], "Cash On Hand - End of Day" if c["counted"] is not None else "Not entered"])
+        if c["over_short"] is not None:
+            row(["OVER / (SHORT)", c["over_short"], "Counted minus expected"], bold=True,
+                fill=_BAD_FILL if abs(c["over_short"]) > 20 else _TOT_FILL)
+    else:
+        row(["Cash on hand counted", c["counted"], "Cash On Hand - End of Day" if c["counted"] is not None else "Not entered"])
+        if c["to_deposit"] is not None:
+            row(["CASH THAT SHOULD HAVE BEEN DEPOSITED", c["to_deposit"],
+                 "Start + cash sales - cash on hand. Enter the total deposits in the Brinks Book section to get an over/short."], bold=True, fill=_TOT_FILL)
+    for col, w in zip("ABCDEF", (44, 20, 20, 16, 16, 20)):
+        ws.column_dimensions[col].width = w
+    for rr in ws.iter_rows(min_row=4, max_row=r[0], min_col=2, max_col=6):
+        for cell in rr:
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '#,##0.00;[Red](#,##0.00)'
+
+
 def _income_sheets(wb, store, period, inc, used):
     """Income Statement (+ Daily Sales, OCS Purchases) sheets."""
     rev, cg = inc["revenue"], inc["cogs"]
     net = rev["net"] or 0.0
     ws = wb.create_sheet(_sheet_name("Income Statement", used), 1)
+    if inc.get("cash") and (inc["cash"]["receipts"] or inc["cash"]["cash"]["counted"] is not None):
+        _cash_sheet(wb, store, period, inc["cash"], used)
     ws["A1"] = f"Income Statement - {store} - {period}"
     ws["A1"].font = Font(name=_FONT, bold=True, size=14, color="065F46")
     ws["A2"] = "All figures in CAD. HST is shown for information and is not income or expense."
@@ -1669,6 +1769,11 @@ HTML_CODE = r"""<!DOCTYPE html>
                                         </div>
                                     </div>
                                     <div id="files-brinks" class="flex flex-wrap gap-1.5 mt-1 text-[11px] text-zinc-600">No files uploaded</div>
+                                    <div class="flex flex-col sm:flex-row sm:items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
+                                        <label for="exp-cashdep" class="text-xs font-bold text-emerald-900 whitespace-nowrap">💵 Total deposits this month</label>
+                                        <input type="text" inputmode="decimal" id="exp-cashdep" placeholder="e.g. 98,450.00" oninput="onExpenseInput(); updateBrinksTotal();" class="flex-1 min-w-0 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-sm font-semibold text-zinc-800">
+                                    </div>
+                                    <p class="text-[11px] text-zinc-500">Add up every deposit in this month's Brinks book. The total is used for the cash consolidation in the monthly report.</p>
                                 </div>
                             </div>
 
@@ -2371,7 +2476,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                         </thead>
                         <tbody id="portal-table-body" class="divide-y divide-emerald-800/60 text-emerald-100">
                             <tr class="hover:bg-emerald-900/30"><td class="p-3 font-medium text-white">Cash On Hand - End of Day</td><td class="p-3"><span class="bg-emerald-800 text-emerald-200 px-2 py-0.5 rounded text-[11px]">Entered ✓</span></td><td class="p-3 text-emerald-300/50 italic" id="portal-date-cooh">No date</td><td class="p-3" id="table-files-cooh">No files</td><td class="p-3 text-emerald-100" id="note-cooh">Not entered</td></tr>
-                            <tr class="hover:bg-emerald-900/30"><td class="p-3 font-medium text-white">Brinks Book (Photos highlighted)</td><td class="p-3"><span class="bg-emerald-900 text-emerald-300/60 px-2 py-0.5 rounded text-[11px]" id="status-brinks">Pending</span></td><td class="p-3 text-emerald-300/50 italic" id="portal-date-brinks">No date</td><td class="p-3" id="table-files-brinks">No files</td><td class="p-3 text-emerald-100" id="note-brinks">No notes</td></tr>
+                            <tr class="hover:bg-emerald-900/30"><td class="p-3 font-medium text-white">Brinks Book (Photos highlighted)<div id="portal-brinks-total" class="text-[11px] font-semibold text-emerald-300 mt-1"></div></td><td class="p-3"><span class="bg-emerald-900 text-emerald-300/60 px-2 py-0.5 rounded text-[11px]" id="status-brinks">Pending</span></td><td class="p-3 text-emerald-300/50 italic" id="portal-date-brinks">No date</td><td class="p-3" id="table-files-brinks">No files</td><td class="p-3 text-emerald-100" id="note-brinks">No notes</td></tr>
                             <tr class="hover:bg-emerald-900/30"><td class="p-3 font-medium text-white">Greenline: Inventory Summary</td><td class="p-3"><span class="bg-emerald-900 text-emerald-300/60 px-2 py-0.5 rounded text-[11px]" id="status-green1">Pending</span></td><td class="p-3 text-emerald-300/50 italic">No date</td><td class="p-3" id="table-files-green1">No files</td><td class="p-3 text-emerald-100" id="note-green1">No notes</td></tr>
                             <tr class="hover:bg-emerald-900/30"><td class="p-3 font-medium text-white">Greenline: Financials</td><td class="p-3"><span class="bg-emerald-900 text-emerald-300/60 px-2 py-0.5 rounded text-[11px]" id="status-green2">Pending</span></td><td class="p-3 text-emerald-300/50 italic">No date</td><td class="p-3" id="table-files-green2">No files</td><td class="p-3 text-emerald-100" id="note-green2">No notes</td></tr>
                             <tr class="hover:bg-emerald-900/30"><td class="p-3 font-medium text-white">Greenline: Payment Types</td><td class="p-3"><span class="bg-emerald-900 text-emerald-300/60 px-2 py-0.5 rounded text-[11px]" id="status-green3">Pending</span></td><td class="p-3 text-emerald-300/50 italic">No date</td><td class="p-3" id="table-files-green3">No files</td><td class="p-3 text-emerald-100" id="note-green3">No notes</td></tr>
@@ -2621,6 +2726,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                         if (exp.systemfees !== undefined) { const el = document.getElementById('exp-systemfees'); if (el) el.value = exp.systemfees; }
                         if (exp.repairs !== undefined) { const el = document.getElementById('exp-repairs'); if (el) el.value = exp.repairs; }
                         if (exp.other !== undefined) { const el = document.getElementById('exp-other'); if (el) el.value = exp.other; }
+                        if (exp.cashdep !== undefined) { const el = document.getElementById('exp-cashdep'); if (el) el.value = exp.cashdep; }
                     }
                 }
                 const invObj = data.inventory_data || data.inventory_json;
@@ -2821,7 +2927,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                 'brinks': document.getElementById('brinks-date')?.value || ''
             };
 
-            const expenses = {rent: document.getElementById('exp-rent')?.value || '', payroll: document.getElementById('exp-payroll')?.value || '', utilities: document.getElementById('exp-utilities')?.value || '', insurance: document.getElementById('exp-insurance')?.value || '', systemfees: document.getElementById('exp-systemfees')?.value || '', repairs: document.getElementById('exp-repairs')?.value || '', other: document.getElementById('exp-other')?.value || ''};
+            const expenses = {rent: document.getElementById('exp-rent')?.value || '', payroll: document.getElementById('exp-payroll')?.value || '', utilities: document.getElementById('exp-utilities')?.value || '', insurance: document.getElementById('exp-insurance')?.value || '', systemfees: document.getElementById('exp-systemfees')?.value || '', repairs: document.getElementById('exp-repairs')?.value || '', other: document.getElementById('exp-other')?.value || '', cashdep: document.getElementById('exp-cashdep')?.value || ''};
 
             const checklistData = {
                 checkboxes: checkboxes,
@@ -3237,6 +3343,65 @@ HTML_CODE = r"""<!DOCTYPE html>
             return tiles + bar + donut;
         }
 
+
+        function cashConsolidationHtml() {
+            const tender = (docFacts && docFacts.tender) ? docFacts.tender : {};
+            const keys = Object.keys(tender);
+            const num = id => { const el = document.getElementById(id); if (!el) return null; const s = String(el.value || '').trim(); if (!s) return null; return parseFloat(s.replace(/[^0-9.-]/g, '')) || 0; };
+            const counted = num('cooh-text'), dep = num('exp-cashdep');
+            const prev = (docFacts && docFacts.prev_cooh !== null && docFacts.prev_cooh !== undefined) ? Number(docFacts.prev_cooh) : null;
+            const prevLabel = (docFacts && docFacts.prev_label) || 'last month';
+            if (!keys.length && counted === null) {
+                return '<div class="mt-5"><div class="text-xs font-bold uppercase tracking-wide text-emerald-800 mb-1">Cash consolidation</div><p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">Upload the Greenline Payment Types report and enter the Cash On Hand to build the cash consolidation.</p></div>';
+            }
+            const low = {}; keys.forEach(k => { low[k.toLowerCase()] = { name: k, v: Number(tender[k]) || 0 }; });
+            const cashKey = Object.keys(low).find(k => k.indexOf('cash') !== -1);
+            const cashSales = cashKey ? low[cashKey].v : 0;
+            const total = keys.reduce((a, k) => a + (Number(tender[k]) || 0), 0);
+            const td = (v, cls) => '<td class="py-1 px-2 text-right whitespace-nowrap ' + (cls || '') + '">' + (v === null || v === undefined ? '<span class="text-zinc-400">-</span>' : moneyFmt(v)) + '</td>';
+            const th = t => '<th class="py-1 px-2 text-right font-semibold">' + t + '</th>';
+            let html = '<div class="mt-5"><div class="text-xs font-bold uppercase tracking-wide text-emerald-800 mb-2">Cash consolidation</div>';
+            // 1. money taken in
+            html += '<div class="text-xs font-bold text-zinc-700 mb-1">1. Money taken in by payment type (Greenline, incl. HST)</div><table class="w-full text-sm mb-3"><tbody>' +
+                keys.map(k => '<tr class="border-t border-zinc-200"><td class="py-1 pr-2">' + esc(k) + '</td>' + td(Number(tender[k]) || 0) + '</tr>').join('') +
+                '<tr class="border-t-2 border-zinc-300 font-bold"><td class="py-1 pr-2">Total taken in</td>' + td(total) + '</tr></tbody></table>';
+            // 2. cards -> deposits
+            const mon = (docFacts && docFacts.moneris) ? docFacts.moneris : [];
+            const cards = mon.map(m => { const key = m.cat === 'mon1' ? 'moneris' : 'online'; const gl = low[key] ? low[key].v : null;
+                return { label: m.cat === 'mon1' ? 'In-store cards' : 'Online', gl: gl, net: Number(m.net) || 0, diff: gl === null ? null : gl - (Number(m.net) || 0), fees: Number(m.fees) || 0, dep: Number(m.deposits) || 0 }; });
+            ['moneris', 'online'].forEach(key => { if (low[key] && !cards.some(c => (c.label === 'In-store cards' ? 'moneris' : 'online') === key))
+                cards.push({ label: low[key].name + ' (no Moneris statement uploaded)', gl: low[key].v, net: null, diff: null, fees: null, dep: null }); });
+            if (cards.length) {
+                html += '<div class="text-xs font-bold text-zinc-700 mb-1">2. Card payments to bank deposits (Moneris)</div><div class="overflow-x-auto overflow-y-hidden"><table class="w-full text-sm mb-3"><thead class="text-[11px] text-zinc-500"><tr><th class="py-1 pr-2 text-left font-semibold">Card type</th>' +
+                    th('In Greenline') + th('Moneris sales') + th('Difference') + th('Fees') + th('Deposited') + '</tr></thead><tbody>' +
+                    cards.map(c => { const bad = c.diff !== null && Math.abs(c.diff) > Math.max(50, Math.abs(c.net || 0) * 0.01);
+                        return '<tr class="border-t border-zinc-200' + (bad ? ' bg-red-50' : '') + '"><td class="py-1 pr-2">' + esc(c.label) + '</td>' + td(c.gl) + td(c.net) + td(c.diff, bad ? 'text-red-600 font-bold' : '') + td(c.fees) + td(c.dep) + '</tr>'; }).join('') +
+                    '</tbody></table></div>';
+            }
+            // 3. cash
+            const opening = prev === null ? 0 : prev;
+            const row = (label, v, note, cls) => '<tr class="border-t border-zinc-200 ' + (cls || '') + '"><td class="py-1 pr-2">' + label + (note ? '<div class="text-[11px] text-zinc-500 font-normal">' + esc(note) + '</div>' : '') + '</td>' + td(v) + '</tr>';
+            html += '<div class="text-xs font-bold text-zinc-700 mb-1">3. Cash</div><table class="w-full text-sm"><tbody>' +
+                row('Cash on hand at start of month', prev, prev === null ? 'No cash count saved for ' + prevLabel + ' - counted as $0' : 'Counted at the end of ' + prevLabel) +
+                row('+ Cash sales', cashSales, 'Greenline payment types');
+            if (dep !== null) {
+                const expected = opening + cashSales - dep;
+                html += row('- Cash deposited to bank (Brinks)', -dep, 'Total deposits from the Brinks Book section') +
+                    row('= Cash that should be on hand', expected, '', 'font-bold') +
+                    row('Cash on hand counted', counted, counted === null ? 'Enter the Cash On Hand in the checklist' : 'Cash On Hand - End of Day');
+                if (counted !== null) {
+                    const os = counted - expected, bad = Math.abs(os) > 20;
+                    html += '<tr class="border-t-2 border-emerald-700"><td class="pt-2 font-bold ' + (bad ? 'text-red-600' : 'text-emerald-700') + '">Over / (short)</td>' + td(os, 'pt-2 font-bold ' + (bad ? 'text-red-600' : 'text-emerald-700')) + '</tr>';
+                }
+            } else {
+                html += row('Cash on hand counted', counted, counted === null ? 'Enter the Cash On Hand in the checklist' : 'Cash On Hand - End of Day');
+                if (counted !== null) html += '<tr class="border-t-2 border-emerald-700"><td class="pt-2 font-bold text-emerald-800">Cash that should have been deposited<div class="text-[11px] text-zinc-500 font-normal">Start + cash sales - cash on hand. Enter the total deposits in the Brinks Book section to see an over/short.</div></td>' + td(opening + cashSales - counted, 'pt-2 font-bold text-emerald-800') + '</tr>';
+            }
+            html += '</tbody></table></div>';
+            return html;
+        }
+        try { const _c = document.getElementById('cooh-text'); if (_c) _c.addEventListener('input', () => { if (expenseReportShown) generateExpenseReport(false); }); } catch (e) {}
+
         function generateExpenseReport(userClick) {
             const box = document.getElementById('expense-report');
             if (!box) return;
@@ -3262,6 +3427,7 @@ HTML_CODE = r"""<!DOCTYPE html>
                 '<tr class="border-t-2 border-emerald-700"><td class="pt-2 font-bold text-base ' + neg(f.noi) + '">Net operating income</td><td class="pt-2 text-right font-bold text-base ' + neg(f.noi) + '">' + moneyFmt(f.noi) + '</td></tr>' +
                 row('Operating margin', pctFmt(f.opMargin), 'font-bold ' + neg(f.opMargin)) +
                 '</tbody></table>' +
+                cashConsolidationHtml() +
                 '<details class="mt-4"><summary class="cursor-pointer text-xs font-bold text-emerald-800">Figures read from your uploaded documents</summary><div id="doc-facts-box" class="mt-2 bg-emerald-950 rounded-lg p-3 text-emerald-100"></div></details>' +
                 '<p class="text-[11px] text-zinc-500 mt-3">Use the Download Detailed Accounting Report button for the full Excel report built from every uploaded file.</p></div>';
             try { renderDocFacts(moneyFmt); } catch(e) {}
@@ -3303,6 +3469,17 @@ HTML_CODE = r"""<!DOCTYPE html>
                 } catch(e) {}
             }, 300);
         }
+
+
+        function updateBrinksTotal() {
+            try {
+                const el = document.getElementById('exp-cashdep'), out = document.getElementById('portal-brinks-total');
+                if (!out) return;
+                const s = el ? String(el.value || '').trim() : '';
+                out.textContent = s ? 'Total deposits: ' + moneyFmt(parseFloat(s.replace(/[^0-9.-]/g, '')) || 0) : 'Total deposits: not entered';
+            } catch (e) {}
+        }
+        setTimeout(updateBrinksTotal, 200);
 
         initApp();
     </script>
@@ -3434,7 +3611,7 @@ DROPBOX_FOLDER_PATH = "/OZ_Store_Uploads"
 MASTER_FILE = "master_store_state.json"
 USERS_FILE = "users.json"
 DB_FILE = "oz_store.db"
-APP_VERSION = "2026-10-24 r9 (file downloads)"
+APP_VERSION = "2026-10-24 r11 (Brinks deposits)"
 USERS_RESET_MARK = "users_reset_" + APP_VERSION.split()[0]
 # NOTE: not called "uploads": a leftover *file* with that name crashed the old app
 LOCAL_FILES_DIR = Path(tempfile.gettempdir()) / "oz_store_files"
@@ -3801,7 +3978,22 @@ def add_files_to_record(spk: str, cat: str, metas: list):
 # ----------------------------------------------------------------------------
 # Report engine glue: saved record -> engine payload -> Excel + ZIP
 # ----------------------------------------------------------------------------
-def rec_to_engine(rec: dict) -> dict:
+def previous_cooh(spk: str):
+    """Cash on hand counted at the end of the previous month for the same store -> (amount or None, label)."""
+    try:
+        store, month, year = spk.rsplit("_", 2)
+        i = MONTHS.index(month)
+        pm, py = (MONTHS[i - 1], year) if i > 0 else (MONTHS[11], str(int(year) - 1))
+        prev = get_record(f"{store}_{pm}_{py}")
+        label = f"{pm} {py}"
+        if prev and str(prev.get("cooh_text") or "").strip():
+            return parse_money(prev.get("cooh_text")), label
+        return None, label
+    except Exception:
+        return None, ""
+
+
+def rec_to_engine(rec: dict, spk: str | None = None) -> dict:
     cj = rec.get("checklist_json") or {}
     inv = normalize_inventory(rec.get("inventory_data"))
     recs = None
@@ -3818,6 +4010,7 @@ def rec_to_engine(rec: dict) -> dict:
         "cooh_text": rec.get("cooh_text", ""), "cooh_date": rec.get("cooh_date", ""),
         "chargebacks_text": rec.get("chargebacks_text", ""), "expenses": cj.get("expenses") or {},
         "inventory_data": recs, "inventory_filename": rec.get("inventory_filename", ""), "files": files,
+        **({"prev_cooh": previous_cooh(spk)[0], "prev_label": previous_cooh(spk)[1]} if spk else {}),
     }
 
 
@@ -3941,7 +4134,7 @@ def build_store_package(store: str, month: str, year: str):
     rec = get_record(spk)
     if not rec:
         return None
-    xlsx, entries, unreadable = package_entries(store, f"{month} {year}", rec_to_engine(rec))
+    xlsx, entries, unreadable = package_entries(store, f"{month} {year}", rec_to_engine(rec, spk))
     return {"spk": spk, "xlsx": xlsx, "zip": build_zip(entries), "n_docs": len(entries) - 1,
             "unreadable": unreadable, "at": datetime.now().strftime("%H:%M:%S")}
 
@@ -3950,7 +4143,7 @@ def build_owner_report(store: str, month: str, year: str):
     rec = get_record(f"{store}_{month}_{year}")
     if not rec:
         return None
-    payload = rec_to_engine(rec)
+    payload = rec_to_engine(rec, f"{store}_{month}_{year}")
     docs, _bad = gather_documents(payload)
     _t, payload["doc_facts"], payload["docs_info"] = compute_facts(docs)
     return build_owner_report_html(store, f"{month} {year}", payload)
@@ -3961,7 +4154,7 @@ def build_all_package(month: str, year: str):
     for s in STORES:
         rec = get_record(f"{s}_{month}_{year}")
         if rec:
-            payloads[s] = rec_to_engine(rec)
+            payloads[s] = rec_to_engine(rec, f"{s}_{month}_{year}")
             entries += package_entries(s, period, payloads[s])[1]
     if not payloads:
         return None
@@ -4018,6 +4211,17 @@ def apply_global_css():
         # which modern Chrome/Edge/Firefox obey over the rules above, so override those too.
         "[data-testid='stMain'],section.main{scrollbar-width:auto !important;scrollbar-color:#059669 #e4e4e7 !important}"
         "[data-testid='stCaptionContainer'],[data-testid='stCaptionContainer'] *{color:#71717a !important}"
+        # Sign-in form: the Streamlit theme writes labels and typed text in near-white, invisible on this light page.
+        "[data-testid='stForm']{background:#ffffff !important;border:1px solid #d4d4d8 !important;border-radius:16px !important;padding:24px !important}"
+        "[data-testid='stWidgetLabel'],[data-testid='stWidgetLabel'] p,[data-testid='stWidgetLabel'] label"
+        "{color:#064e3b !important;font-weight:700 !important;font-size:15px !important}"
+        "[data-testid='stTextInputRootElement'],[data-baseweb='input'],[data-baseweb='base-input']{background:#ffffff !important;border-color:#a1a1aa !important}"
+        "[data-testid='stTextInputRootElement'] input,[data-baseweb='input'] input"
+        "{color:#18181b !important;background:#ffffff !important;-webkit-text-fill-color:#18181b !important;caret-color:#065f46}"
+        "[data-testid='stTextInputRootElement'] input::placeholder{color:#71717a !important;-webkit-text-fill-color:#71717a !important}"
+        "[data-testid='stTextInputRootElement'] button{color:#52525b !important;background:transparent !important}"
+        "[data-testid='stFormSubmitButton'] button{background:#059669 !important;color:#ffffff !important;border:none !important;font-weight:700 !important}"
+        "[data-testid='stAlert'] *{color:#7f1d1d !important}"
         "</style>", unsafe_allow_html=True)
 
 
@@ -4068,8 +4272,8 @@ if not st.session_state.logged_in:
 
         st.caption(f"App version {APP_VERSION}")
         with st.form("login_form"):
-            username_input = st.text_input("Username")
-            password_input = st.text_input("Password", type="password")
+            username_input = st.text_input("User name", placeholder="Enter your user name")
+            password_input = st.text_input("Password", type="password", placeholder="Enter your password")
             submit = st.form_submit_button("Sign In", **STRETCH)
 
             if submit:
@@ -4458,7 +4662,7 @@ def build_html_page() -> str:
 
     page_facts = {"sales": 0, "sales_src": "", "cogs": 0, "cogs_src": "", "extra": [], "docs": []}
     if rec:
-        sig = "v2:" + ",".join(sorted(str(f.get("id")) for lst in ((rec["checklist_json"].get("files")) or {}).values() for f in lst))
+        sig = "v3:" + ",".join(sorted(str(f.get("id")) for lst in ((rec["checklist_json"].get("files")) or {}).values() for f in lst))
         cached_facts = None
         try:
             with _connect() as conn:
@@ -4482,6 +4686,8 @@ def build_html_page() -> str:
                     "sales": inc["revenue"]["net"] if inc["revenue"]["from_docs"] else 0, "sales_src": inc["revenue"]["src"],
                     "cogs": inc["cogs"]["amount"] if from_greenline else 0, "cogs_src": inc["cogs"]["src"],
                     "extra": [{"label": x["label"], "total": x["amount"]} for x in inc["extra_expenses"]],
+                    "tender": inc["tender"],
+                    "moneris": [{"cat": m["cat"], "net": m["net"], "fees": m["fees"], "deposits": m["deposits"]} for m in inc["moneris"]],
                     "docs": describe_docs(payload["docs_info"]) + [
                         {"label": lab, "file": nm, "status": "unreadable", "lines": [], "rows": 0, "headers": [], "cols": [], "error": err}
                         for lab, nm, err in _bad],
@@ -4496,6 +4702,10 @@ def build_html_page() -> str:
             except Exception as ex:
                 log.exception("Could not read totals from the uploaded documents")
                 page_facts["error"] = f"{type(ex).__name__}: {ex}"
+
+    if rec:
+        page_facts = dict(page_facts)
+        page_facts["prev_cooh"], page_facts["prev_label"] = previous_cooh(spk)
 
     cred_rows = ""
     if role == "admin":
