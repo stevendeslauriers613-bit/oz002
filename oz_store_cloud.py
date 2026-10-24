@@ -216,13 +216,14 @@ def clean_inventory(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 # Totals read from uploaded documents (Greenline, Moneris, OCS, gas cards)
 # --------------------------------------------------------------------------
 FACT_COLS = {
-    "green2": ["net sales", "total net sales", "total sales", "gross sales", "sales", "total"],
-    "green3": ["total", "total amount", "amount"],
-    "mon1": ["net sales", "total sales", "sales", "amount", "total"],
-    "mon2": ["net sales", "total sales", "sales", "amount", "total"],
-    "ocs2": ["invoice total", "total", "net amount", "amount", "subtotal"],
-    "gas1": ["total", "amount", "cost"],
-    "gas2": ["total", "amount", "cost"],
+    "green2": ["net sales", "total net sales", "net sale", "total sales", "gross sales", "sales", "total"],
+    "green3": ["total", "total amount", "amount", "payment total"],
+    "mon1": ["net sales", "total sales", "net amount", "sales", "amount", "total"],
+    "mon2": ["net sales", "total sales", "net amount", "sales", "amount", "total"],
+    "ocs1": ["balance", "amount due", "closing balance", "total"],
+    "ocs2": ["invoice total", "invoice amount", "total", "net amount", "amount", "subtotal"],
+    "gas1": ["total", "amount", "spend", "cost", "net amount"],
+    "gas2": ["total", "amount", "spend", "cost", "net amount"],
 }
 _TOTAL_ROW = re.compile(r"^\s*(grand\s+)?(sub)?totals?\b", re.I)
 
@@ -280,6 +281,18 @@ def extract_total(cat: str, df: pd.DataFrame):
                     v = parse_money(row[c])
                     if v:
                         return {"col": str(row[label_col]).strip(), "total": v, "rows": 1}
+    # No recognised heading: use the Total row if there is one, or the only number column
+    if col is None and total_rows is not None and total_rows.any() and nums:
+        row = df[total_rows].iloc[-1]
+        vals = [(c, row[c]) for c in nums if pd.notna(row[c]) and float(row[c]) != 0]
+        if vals:
+            c, v = vals[-1]
+            return {"col": f"Total row, column {c}", "total": float(v), "rows": int((~total_rows).sum())}
+    if col is None and cat in ('mon1', 'mon2', 'ocs2', 'gas1', 'gas2', 'green3') and len(nums) == 1 \
+            and not re.search(r'qty|quantity|litre|liter|unit|count', str(nums[0]), re.I):
+        c = nums[0]
+        return {"col": str(c), "total": float(df[c].sum(skipna=True)), "rows": int(df[c].notna().sum())}
+
     return None
 
 
@@ -431,45 +444,6 @@ def _num(v) -> float:
         return 0.0
 
 
-def financials(payload: dict) -> dict:
-    """Sales: Greenline Financials > Moneris > inventory 'sold'. COGS: inventory cost > OCS invoices > 80% estimate."""
-    rows = payload.get("inventory_data") or []
-    inv_sales = inv_cogs = 0.0
-    if rows:
-        headers = list(rows[0].keys())
-        sold_h = next((h for h in headers if h and "sold" in str(h).lower()), None)
-        cost_h = next((h for h in headers if h and "cost" in str(h).lower()), None)
-        for r in rows:
-            if sold_h and r.get(sold_h) is not None:
-                inv_sales += _num(r.get(sold_h))
-            else:
-                keys = [k for k in r if k != "Category"]
-                if keys:
-                    inv_sales += _num(r.get(keys[0]))
-            if cost_h and r.get(cost_h) is not None:
-                inv_cogs += _num(r.get(cost_h))
-    doc = summarize_facts(payload.get("doc_facts") or [])
-    if doc["sales"] > 0:
-        sales, sales_src = doc["sales"], doc["sales_src"]
-    else:
-        sales, sales_src = inv_sales, ("Inventory 'sold' column" if inv_sales > 0 else "")
-    cogs, cogs_src = inv_cogs, ("Inventory cost column" if inv_cogs > 0 else "")
-    if cogs == 0 and doc["cogs"] > 0:
-        cogs, cogs_src = doc["cogs"], doc["cogs_src"]
-    estimated = False
-    if cogs == 0 and sales > 0:
-        cogs, estimated, cogs_src = sales * 0.80, True, "Estimated at 80% of sales"
-    gross = sales - cogs
-    exp = total_expenses(payload)
-    noi = gross - exp
-    return {
-        "sales": sales, "cogs": cogs, "gross": gross, "expenses": exp, "noi": noi,
-        "gross_margin": (gross / sales * 100) if sales > 0 else 0.0,
-        "op_margin": (noi / sales * 100) if sales > 0 else 0.0,
-        "cogs_estimated": estimated, "sales_src": sales_src, "cogs_src": cogs_src,
-    }
-
-
 # --------------------------------------------------------------------------
 # Report builders
 # --------------------------------------------------------------------------
@@ -527,19 +501,21 @@ def build_store_workbook(
         ["Moneris chargebacks", payload.get("chargebacks_text") or "Nothing to report."],
     ])
 
-    exp = payload.get("expenses") or {}
-    exp_rows = [[label, parse_money(exp.get(key))] for key, label in EXPENSE_FIELDS]
-    exp_rows.append(["TOTAL", total_expenses(payload)])
-    r = _block(ws, r, "Operating expenses", ["Expense", "Amount"], exp_rows)
-
     fin = financials(payload)
+    inc = fin["inc"]
+    exp = payload.get("expenses") or {}
+    exp_rows = [[label, parse_money(exp.get(key)), "Entered by you"] for key, label in EXPENSE_FIELDS]
+    exp_rows += [[x["label"], x["amount"], x["src"]] for x in inc["extra_expenses"]]
+    exp_rows.append(["TOTAL", inc["total_expenses"], ""])
+    r = _block(ws, r, "Operating expenses", ["Expense", "Amount", "Source"], exp_rows)
+
     if fin["sales"] > 0:
         r = _block(ws, r, "Financial summary", ["Measure", "Value"], [
             [f"Total sales - {fin['sales_src']}", fin["sales"]],
             [f"Cost of goods sold - {fin['cogs_src']}", fin["cogs"]],
             ["Gross profit", fin["gross"]],
             ["Gross margin %", round(fin["gross_margin"], 1)],
-            ["Operating expenses", fin["expenses"]],
+            ["Operating expenses (incl. card fees and fuel)", fin["expenses"]],
             ["Net operating income", fin["noi"]],
             ["Operating margin %", round(fin["op_margin"], 1)],
         ])
@@ -576,6 +552,7 @@ def build_store_workbook(
                 _put(wd, i, j, v, fill=_BAD_FILL if "NOT FOUND" in str(rec[-1]) else None)
         _autowidth(wd)
 
+    _income_sheets(wb, store, period, inc, used)
     _autowidth(ws)
     return _to_bytes(wb)
 
@@ -601,7 +578,7 @@ def build_consolidated_workbook(period: str, payloads: dict[str, dict]) -> bytes
             parse_money(cooh) if cooh else "Not entered",
             p.get("cooh_date") or "",
             p.get("chargebacks_text") or "",
-            total_expenses(p),
+            fin["expenses"],
             fin["sales"],
             fin["noi"],
             ", ".join(missing_docs(p)) or "-",
@@ -625,11 +602,30 @@ def build_consolidated_workbook(period: str, payloads: dict[str, dict]) -> bytes
         for j, v in enumerate(vals, 2):
             _put(wx, i, j, v)
         _put(wx, i, len(stores) + 2, sum(vals), bold=True)
-    tr = len(EXPENSE_FIELDS) + 2
+    extra_labels = []
+    for s_ in stores:
+        for x in financials(payloads[s_])["inc"]["extra_expenses"]:
+            lab = "Fuel - gas cards" if x["label"].startswith("Fuel") else x["label"].split(" - ")[0] + " - " + x["label"].split(" - ")[1].split(" (")[0]
+            if lab not in extra_labels:
+                extra_labels.append(lab)
+    for k, lab in enumerate(extra_labels):
+        row_ = len(EXPENSE_FIELDS) + 2 + k
+        _put(wx, row_, 1, lab)
+        tot_ = 0.0
+        for j, s_ in enumerate(stores, 2):
+            v = 0.0
+            for x in financials(payloads[s_])["inc"]["extra_expenses"]:
+                l2 = "Fuel - gas cards" if x["label"].startswith("Fuel") else x["label"].split(" - ")[0] + " - " + x["label"].split(" - ")[1].split(" (")[0]
+                if l2 == lab:
+                    v += x["amount"]
+            _put(wx, row_, j, v)
+            tot_ += v
+        _put(wx, row_, len(stores) + 2, tot_, bold=True)
+    tr = len(EXPENSE_FIELDS) + 2 + len(extra_labels)
     _put(wx, tr, 1, "TOTAL", bold=True, fill=_TOT_FILL)
     for j, s in enumerate(stores, 2):
-        _put(wx, tr, j, total_expenses(payloads[s]), bold=True, fill=_TOT_FILL)
-    _put(wx, tr, len(stores) + 2, sum(total_expenses(payloads[s]) for s in stores), bold=True, fill=_TOT_FILL)
+        _put(wx, tr, j, financials(payloads[s])["expenses"], bold=True, fill=_TOT_FILL)
+    _put(wx, tr, len(stores) + 2, sum(financials(payloads[s])["expenses"] for s in stores), bold=True, fill=_TOT_FILL)
     wx.freeze_panes = "B2"
     _autowidth(wx)
 
@@ -665,6 +661,490 @@ def build_zip(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 # ==========================================================================
+
+
+
+def describe_columns(df: pd.DataFrame, limit: int = 5) -> list[dict]:
+    """Totals of the biggest number columns, for the 'what did we read' table."""
+    if df is None or df.empty:
+        return []
+    df = df.dropna(how="all")
+    lc = _first_text_col(df)
+    if lc is not None:
+        df = df[~df[lc].astype(str).str.match(_TOTAL_ROW)]
+    out = []
+    for c in df.columns:
+        if pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_bool_dtype(df[c]) and not _TEXT_COLS.search(str(c)):
+            v = float(df[c].sum(skipna=True))
+            if v != 0:
+                out.append({"name": str(c), "total": v})
+    return sorted(out, key=lambda d: -abs(d["total"]))[:limit]
+
+
+# ==========================================================================
+# DOCUMENT READERS + INCOME STATEMENT
+# (Greenline financials / payment types, Moneris PDFs, OCS invoices, gas card PDFs)
+# ==========================================================================
+try:
+    from pypdf import PdfReader as _PdfReader
+except Exception:          # the report still works without it, PDFs are just attached
+    _PdfReader = None
+
+_MONEY_RE = r"-?\(?[\d,]*\.\d{2}\)?"
+
+
+def _mf(s) -> float:
+    """'3,259.85', '-1,222.38', '(12.00)', '35.74CR' -> float (CR = credit = negative)."""
+    if s is None:
+        return 0.0
+    t = str(s).strip()
+    cr = t.upper().endswith("CR")
+    t = re.sub(r"(?i)cr$", "", t)
+    v = parse_money(t)
+    return -abs(v) if cr else v
+
+
+def pdf_text(data: bytes) -> str:
+    if _PdfReader is None:
+        return ""
+    try:
+        r = _PdfReader(io.BytesIO(data))
+        return "\n".join((p.extract_text() or "") for p in r.pages)
+    except Exception:
+        return ""
+
+
+def _col(df: pd.DataFrame, *names):
+    cols = {str(c).strip().casefold(): c for c in df.columns}
+    for n in names:
+        if n in cols:
+            return cols[n]
+    for n in names:
+        for k, c in cols.items():
+            if k.startswith(n):
+                return c
+    return None
+
+
+def _colsum(df, col) -> float:
+    if col is None:
+        return 0.0
+    s = pd.to_numeric(df[col].astype(str).str.replace(r"[$,\s]", "", regex=True), errors="coerce")
+    return float(s.sum(skipna=True))
+
+
+def _daily(df, date_col, val_col):
+    if date_col is None or val_col is None:
+        return []
+    d = pd.to_datetime(df[date_col], errors="coerce")
+    v = pd.to_numeric(df[val_col].astype(str).str.replace(r"[$,\s]", "", regex=True), errors="coerce")
+    out = [(x.strftime("%Y-%m-%d"), float(y)) for x, y in zip(d, v) if pd.notna(x) and pd.notna(y)]
+    return out
+
+
+def read_greenline_financials(df):
+    net = _col(df, "net sales")
+    if net is None:
+        return None
+    date = _col(df, "date")
+    m = {
+        "gross": _colsum(df, _col(df, "gross sales")), "refunds": _colsum(df, _col(df, "refunds")),
+        "discounts": _colsum(df, _col(df, "discounts")), "net": _colsum(df, net),
+        "hst": _colsum(df, _col(df, "hst")), "total": _colsum(df, _col(df, "total")),
+        "cost": _colsum(df, _col(df, "cost")), "profit": _colsum(df, _col(df, "profit")),
+        "giftcards": _colsum(df, _col(df, "gift cards")),
+    }
+    m["days"] = int(df[net].notna().sum())
+    m["daily"] = _daily(df, date, net)
+    return m
+
+
+def read_payment_types(df):
+    date = _col(df, "payments.completedate", "date", "completedate")
+    cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c != date]
+    if date is None or len(cols) < 2:
+        return None
+    tender = {str(c).strip().title(): _colsum(df, c) for c in cols}
+    return {"tender": {k: v for k, v in tender.items() if abs(v) > 0.005}, "days": int(len(df))}
+
+
+def read_moneris_statement(text: str):
+    if "Sales Summary by Card Type" not in text:
+        return None
+    g = re.search(r"Grand Total\s+(\d[\d,]*)\s+(" + _MONEY_RE + r")\s+(\d[\d,]*)\s+(" + _MONEY_RE + r")\s+(\d[\d,]*)\s+(" + _MONEY_RE + r")", text)
+    if not g:
+        return None
+    fees = re.search(r"Total fees\s+(" + _MONEY_RE + ")", text)
+    dep = re.search(r"Total Deposits\s+\S+\s+\S+\s+(" + _MONEY_RE + ")", text)
+    when = re.search(r"Statement Date:\s*([A-Za-z]+ \d{4})", text)
+    return {
+        "gross": _mf(g.group(2)), "returns": abs(_mf(g.group(4))), "net": _mf(g.group(6)), "items": int(g.group(5).replace(",", "")),
+        "fees": abs(_mf(fees.group(1))) if fees else 0.0, "deposits": _mf(dep.group(1)) if dep else 0.0,
+        "statement": when.group(1) if when else "",
+    }
+
+
+def read_ocs_invoice(data: bytes):
+    try:
+        from openpyxl import load_workbook
+        ws = load_workbook(io.BytesIO(data), data_only=True, read_only=True).active
+    except Exception:
+        return None
+    vals = {}
+    number = date_ = ""
+    labels = {"SALES SUBTOTAL AMOUNT": "subtotal", "FREIGHT CHARGES": "freight", "SALES TAX": "tax", "CAD TOTAL": "total"}
+    for row in ws.iter_rows(values_only=True):
+        cells = [c for c in row if c is not None and str(c).strip() != ""]
+        for i, c in enumerate(cells):
+            s = str(c).strip()
+            if s.upper() in labels and i + 1 < len(cells):
+                vals[labels[s.upper()]] = _mf(cells[i + 1])
+            m = re.match(r"Invoice\s+(\S+)", s)
+            if m and not number:
+                number = m.group(1)
+            if not date_ and re.fullmatch(r"\d{4}-\d\d-\d\d", s):
+                date_ = s
+    if "total" not in vals or "subtotal" not in vals:
+        return None
+    return {"number": number, "date": date_, "subtotal": vals.get("subtotal", 0.0), "freight": vals.get("freight", 0.0),
+            "tax": vals.get("tax", 0.0), "total": vals.get("total", 0.0)}
+
+
+def read_fuel_statement(text: str):
+    if "TOTAL CURRENT CHARGES" in text:                      # monthly statement summary
+        cc = re.search(r"TOTAL CURRENT CHARGES\s+(" + _MONEY_RE + ")", text)
+        gst = re.search(r"NET GST/HST\s+(" + _MONEY_RE + ")", text)
+        lit = re.search(r"TOTAL\s+(\d+)\s+([\d,]+\.\d)\s", text)
+        disc = re.search(r"DISCOUNT\s+(" + _MONEY_RE + r"CR)", text)
+        return {"kind": "summary", "total": _mf(cc.group(1)) if cc else 0.0, "gst": _mf(gst.group(1)) if gst else 0.0,
+                "litres": _mf(lit.group(2)) if lit else 0.0, "discount": abs(_mf(disc.group(1))) if disc else 0.0}
+    nets = re.findall(r"NET GST/HST\s+(" + _MONEY_RE + r")\s+NET TOTAL\s+(" + _MONEY_RE + ")", text)
+    if nets:
+        lit = re.search(r"TOTAL\s+--\s+(\d+)\s+(\d+)", text)
+        return {"kind": "details", "total": sum(_mf(n[1]) for n in nets), "gst": sum(_mf(n[0]) for n in nets),
+                "litres": float(int(lit.group(1)) + int(lit.group(2))) if lit else 0.0, "cards": len(nets)}
+    return None
+
+
+def analyze_doc(cat: str, name: str, data: bytes, df) -> dict:
+    """Read one uploaded file. Always returns {cat,file,kind,lines,status,...}."""
+    info = {"cat": cat, "file": name, "kind": "attached", "lines": [], "status": "attached"}
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+
+    def done(kind, lines, **kw):
+        info.update(kind=kind, lines=lines, status="read", **kw)
+        return info
+
+    try:
+        if ext == "pdf":
+            text = pdf_text(data)
+            if cat in ("mon1", "mon2"):
+                m = read_moneris_statement(text)
+                if m:
+                    return done("moneris", [["Net sales", m["net"]], ["Gross sales", m["gross"]], ["Returns", m["returns"]],
+                                            ["Card fees", m["fees"]], ["Deposited", m["deposits"]]], m=m)
+            if cat in ("gas1", "gas2"):
+                f = read_fuel_statement(text)
+                if f:
+                    lines = [["Fuel bought (incl. HST)", f["total"]], ["HST on fuel", f["gst"]], ["Litres", f["litres"]]]
+                    return done("fuel_" + f["kind"], lines, f=f)
+            return info
+        if ext in ("xlsx", "xlsm") and cat == "ocs2":
+            inv = read_ocs_invoice(data)
+            if inv:
+                return done("ocs_invoice", [["Invoice " + inv["number"], inv["date"]], ["Product + freight", inv["subtotal"] + inv["freight"]],
+                                            ["HST", inv["tax"]], ["Invoice total", inv["total"]]], inv=inv)
+        if df is not None and not df.empty:
+            if cat == "green2":
+                g = read_greenline_financials(df)
+                if g:
+                    return done("greenline_fin", [["Net sales", g["net"]], ["Cost of goods sold", g["cost"]], ["Gross sales", g["gross"]],
+                                                  ["Refunds", g["refunds"]], ["Discounts", g["discounts"]], ["HST collected", g["hst"]],
+                                                  ["Days", g["days"]]], g=g)
+            if cat == "green3":
+                p = read_payment_types(df)
+                if p:
+                    return done("payment_types", [[k, v] for k, v in p["tender"].items()], p=p)
+            got = extract_total(cat, df)
+            if got:
+                return done("table_total", [[got["col"], got["total"]]], got=got, rows=int(len(df)))
+            info.update(status="nothing", rows=int(len(df)), headers=[str(c) for c in list(df.columns)[:8]], cols=describe_columns(df))
+    except Exception:
+        pass
+    return info
+
+
+def _inv_totals(payload: dict) -> dict:
+    rows = payload.get("inventory_data") or []
+    out = {"opening": 0.0, "purchased": 0.0, "sold": 0.0, "closing": 0.0, "cost": 0.0}
+    if not rows:
+        return out
+    heads = list(rows[0].keys())
+
+    def find(*names):
+        for n in names:
+            for h in heads:
+                if h and str(h).strip().casefold() == n:
+                    return h
+        return None
+    hs = {k: find(k) for k in ("opening", "purchased", "sold", "closing")}
+    cost_h = next((h for h in heads if h and "cost" in str(h).lower()), None)
+    sold_h = hs["sold"] or next((h for h in heads if h and "sold" in str(h).lower()), None)
+    for r in rows:
+        for k in ("opening", "purchased", "closing"):
+            if hs[k]:
+                out[k] += _num(r.get(hs[k]))
+        if sold_h:
+            out["sold"] += _num(r.get(sold_h))
+        elif len(r) > 1:
+            first = next((k for k in r if k != "Category"), None)
+            out["sold"] += _num(r.get(first)) if first else 0.0
+        if cost_h:
+            out["cost"] += _num(r.get(cost_h))
+    return out
+
+
+def _chk(label, a, b, tol_pct=1.0, tol_abs=25.0, a_name="", b_name=""):
+    diff = a - b
+    big = max(abs(a), abs(b), 1.0)
+    ok = abs(diff) <= max(tol_abs, big * tol_pct / 100)
+    return {"label": label, "a": a, "b": b, "diff": diff, "ok": ok, "a_name": a_name, "b_name": b_name}
+
+
+def build_income(payload: dict) -> dict:
+    infos = payload.get("docs_info") or []
+    by = lambda kind: [i for i in infos if i["kind"] == kind]
+    gl, pay, mon = by("greenline_fin"), by("payment_types"), by("moneris")
+    ocs, fs, fd = by("ocs_invoice"), by("fuel_summary"), by("fuel_details")
+    inv = _inv_totals(payload)
+    inc = {"docs_used": [], "checks": []}
+
+    # ---- revenue
+    rev = {"gross": 0.0, "refunds": 0.0, "discounts": 0.0, "net": 0.0, "hst": 0.0, "src": "", "from_docs": False}
+    if gl:
+        g = [i["g"] for i in gl]
+        rev.update(gross=sum(x["gross"] for x in g), refunds=sum(x["refunds"] for x in g), discounts=sum(x["discounts"] for x in g),
+                   net=sum(x["net"] for x in g), hst=sum(x["hst"] for x in g), src="Greenline: Financials", from_docs=True)
+    elif mon:
+        m = [i["m"] for i in mon]
+        rev.update(gross=sum(x["gross"] for x in m), refunds=sum(x["returns"] for x in m), net=sum(x["net"] for x in m),
+                   src="Moneris statements (card sales only)", from_docs=True)
+    else:
+        facts = payload.get("doc_facts") or []
+        d = summarize_facts(facts)
+        if d["sales"] > 0:
+            rev.update(net=d["sales"], src=d["sales_src"], from_docs=True)
+        elif inv["sold"] > 0:
+            rev.update(net=inv["sold"], src="Inventory 'sold' column")
+    inc["revenue"] = rev
+
+    # ---- cost of goods
+    cogs = {"amount": 0.0, "src": "", "estimated": False}
+    if gl and sum(i["g"]["cost"] for i in gl) > 0:
+        cogs.update(amount=sum(i["g"]["cost"] for i in gl), src="Greenline: Financials (cost)")
+    elif inv["cost"] > 0:
+        cogs.update(amount=inv["cost"], src="Inventory cost column")
+    elif rev["from_docs"] and inv["sold"] > 0:
+        cogs.update(amount=inv["sold"], src="Inventory sold, valued at cost")
+    elif rev["net"] > 0:
+        cogs.update(amount=rev["net"] * 0.80, src="Estimated at 80% of sales", estimated=True)
+    inc["cogs"] = cogs
+    gross = rev["net"] - cogs["amount"]
+    inc["gross_profit"] = gross
+    inc["gross_margin"] = gross / rev["net"] * 100 if rev["net"] > 0 else 0.0
+
+    # ---- expenses
+    exp_map = payload.get("expenses") or {}
+    lines = [{"label": label, "amount": parse_money(exp_map.get(k)), "src": "Entered by you"} for k, label in EXPENSE_FIELDS]
+    lines = [x for x in lines if x["amount"] > 0]
+    extra = []
+    for i in mon:
+        m = i["m"]
+        if m["fees"] > 0:
+            extra.append({"label": "Card processing fees - " + ("in-store" if i["cat"] == "mon1" else "online") + " (Moneris)",
+                          "amount": m["fees"], "src": i["file"]})
+    if fs:
+        fuel = sum(i["f"]["total"] - i["f"]["gst"] for i in fs)
+        lit = sum(i["f"]["litres"] for i in fs)
+    else:
+        fuel = sum(i["f"]["total"] - i["f"]["gst"] for i in fd)
+        lit = sum(i["f"]["litres"] for i in fd)
+    if fuel > 0:
+        extra.append({"label": "Fuel - gas cards (excl. HST)", "amount": fuel, "src": "Gas card statement", "litres": lit})
+    inc["expense_lines"] = lines + extra
+    inc["extra_expenses"] = extra
+    inc["manual_expenses"] = sum(x["amount"] for x in lines)
+    inc["total_expenses"] = inc["manual_expenses"] + sum(x["amount"] for x in extra)
+    inc["noi"] = gross - inc["total_expenses"]
+    inc["op_margin"] = inc["noi"] / rev["net"] * 100 if rev["net"] > 0 else 0.0
+
+    # ---- supporting schedules
+    tender = {}
+    for i in pay:
+        for k, v in i["p"]["tender"].items():
+            tender[k] = tender.get(k, 0.0) + v
+    inc["tender"] = tender
+    invs = [i["inv"] for i in ocs]
+    inc["purchases"] = {"invoices": sorted(invs, key=lambda x: x["date"]), "subtotal": sum(x["subtotal"] for x in invs),
+                        "freight": sum(x["freight"] for x in invs), "tax": sum(x["tax"] for x in invs),
+                        "total": sum(x["total"] for x in invs)}
+    inc["inventory"] = inv
+    inc["daily"] = sorted(d for i in gl for d in i["g"]["daily"])
+    inc["fuel"] = {"amount": fuel, "litres": lit}
+    inc["moneris"] = [{"cat": i["cat"], **i["m"]} for i in mon]
+
+    # ---- cross-checks between the files
+    ck = inc["checks"]
+    if gl and inv["sold"] > 0:
+        ck.append(_chk("Cost of goods: Greenline financials vs inventory 'sold' (at cost)", sum(i["g"]["cost"] for i in gl), inv["sold"],
+                       2.0, 100.0, "Greenline cost", "Inventory sold"))
+    if tender:
+        low = {k.casefold(): v for k, v in tender.items()}
+        for i in mon:
+            key = "moneris" if i["cat"] == "mon1" else "online"
+            if key in low:
+                ck.append(_chk(("In-store" if i["cat"] == "mon1" else "Online") + " card sales: Moneris statement vs Greenline payments",
+                               i["m"]["net"], low[key], 1.0, 50.0, "Moneris net sales", "Greenline '" + key + "' payments"))
+        if gl:
+            ck.append(_chk("Total tendered vs Greenline total (sales + HST)", sum(tender.values()), sum(i["g"]["total"] for i in gl),
+                           1.0, 50.0, "Payment types", "Greenline total"))
+    if ocs and inv["purchased"] > 0:
+        c = _chk("Purchases: OCS invoices vs inventory 'purchased'", inc["purchases"]["subtotal"], inv["purchased"], 2.0, 100.0,
+                 "OCS invoices (before freight)", "Inventory purchased")
+        dates = sorted(x["date"] for x in invs if x["date"])
+        if not c["ok"] and dates:
+            last = dates[-1]
+            late = sum(x["subtotal"] for x in invs if x["date"] == last)
+            c["note"] = (f"Invoices dated {last} total ${late:,.2f}. Deliveries invoiced on the last day of the month are often "
+                         f"received into inventory the next month.")
+        ck.append(c)
+    return inc
+
+
+def financials(payload: dict) -> dict:
+    inc = build_income(payload)
+    rev = inc["revenue"]
+    return {
+        "sales": rev["net"], "cogs": inc["cogs"]["amount"], "gross": inc["gross_profit"], "expenses": inc["total_expenses"],
+        "noi": inc["noi"], "gross_margin": inc["gross_margin"], "op_margin": inc["op_margin"],
+        "cogs_estimated": inc["cogs"]["estimated"], "sales_src": rev["src"], "cogs_src": inc["cogs"]["src"], "inc": inc,
+    }
+
+
+def _income_sheets(wb, store, period, inc, used):
+    """Income Statement (+ Daily Sales, OCS Purchases) sheets."""
+    rev, cg = inc["revenue"], inc["cogs"]
+    net = rev["net"] or 0.0
+    ws = wb.create_sheet(_sheet_name("Income Statement", used), 1)
+    ws["A1"] = f"Income Statement - {store} - {period}"
+    ws["A1"].font = Font(name=_FONT, bold=True, size=14, color="065F46")
+    ws["A2"] = "All figures in CAD. HST is shown for information and is not income or expense."
+    ws["A2"].font = Font(name=_FONT, size=9, italic=True, color="71717A")
+    _header(ws, 4, ["", "Amount", "% of net sales", "Source / note"])
+    pct = lambda v: (v / net) if net else None
+    row = [5]
+
+    def line(label, amount, note="", bold=False, fill=None, neg=False, pct_on=True):
+        r_ = row[0]
+        _put(ws, r_, 1, label, bold=bold, fill=fill)
+        _put(ws, r_, 2, -amount if neg else amount, bold=bold, fill=fill)
+        c = _put(ws, r_, 3, pct(amount) if pct_on else None, bold=bold, fill=fill)
+        ws.cell(row=r_, column=3).number_format = "0.0%"
+        _put(ws, r_, 4, note, fill=fill)
+        row[0] += 1
+
+    def head(t):
+        _put(ws, row[0], 1, t, bold=True, fill=_TOT_FILL)
+        for c in (2, 3, 4):
+            _put(ws, row[0], c, "", fill=_TOT_FILL)
+        row[0] += 1
+
+    head("REVENUE")
+    if rev["gross"]:
+        line("Gross sales", rev["gross"], rev["src"])
+        line("Less: refunds", rev["refunds"], "", neg=True)
+        line("Less: discounts", rev["discounts"], "", neg=True)
+    line("Net sales", rev["net"], rev["src"], bold=True)
+    if rev["hst"]:
+        line("HST collected (not income)", rev["hst"], "Owed to the government", pct_on=False)
+    head("COST OF GOODS SOLD")
+    line("Cost of goods sold", cg["amount"], cg["src"], neg=True)
+    line("GROSS PROFIT", inc["gross_profit"], "", bold=True, fill=_TOT_FILL)
+    head("OPERATING EXPENSES")
+    for x in inc["expense_lines"]:
+        line(x["label"], x["amount"], x["src"], neg=True)
+    line("Total operating expenses", inc["total_expenses"], "", bold=True, neg=True)
+    line("NET OPERATING INCOME", inc["noi"], "", bold=True, fill=_TOT_FILL)
+    row[0] += 1
+
+    def table(title, heads, rows, bad=None):
+        _put(ws, row[0], 1, title, bold=True)
+        row[0] += 1
+        for j, h in enumerate(heads, 1):
+            _put(ws, row[0], j, h, bold=True, fill=_TOT_FILL)
+        row[0] += 1
+        for rec in rows:
+            for j, v in enumerate(rec, 1):
+                _put(ws, row[0], j, v, fill=_BAD_FILL if (bad and bad(rec)) else None)
+            row[0] += 1
+        row[0] += 1
+
+    if inc["tender"]:
+        tot = sum(inc["tender"].values()) or 1
+        table("SALES BY PAYMENT TYPE (incl. HST)", ["Payment type", "Amount", "Share"],
+              [[k, v, v / tot] for k, v in inc["tender"].items()] + [["Total", tot, 1.0]])
+        for r_ in range(row[0] - 1 - len(inc["tender"]) - 1, row[0] - 1):
+            ws.cell(row=r_, column=3).number_format = "0.0%"
+    if inc["moneris"]:
+        table("MONERIS CARD STATEMENTS", ["Statement", "Net sales", "Fees", "Fee % of sales", "Deposited"],
+              [["In-store" if m["cat"] == "mon1" else "Online", m["net"], m["fees"], (m["fees"] / m["net"]) if m["net"] else 0, m["deposits"]]
+               for m in inc["moneris"]])
+        for r_ in range(row[0] - 1 - len(inc["moneris"]), row[0] - 1):
+            ws.cell(row=r_, column=4).number_format = "0.00%"
+    p = inc["purchases"]
+    if p["invoices"]:
+        table("PURCHASES FROM OCS", ["Item", "Amount"], [
+            ["Invoices", len(p["invoices"])], ["Product", p["subtotal"]], ["Freight", p["freight"]],
+            ["HST (recoverable)", p["tax"]], ["Invoice total", p["total"]]])
+    iv = inc["inventory"]
+    if iv["opening"] or iv["closing"] or iv["sold"]:
+        table("INVENTORY MOVEMENT (at cost)", ["Measure", "Amount"], [
+            ["Opening inventory", iv["opening"]], ["Purchased", iv["purchased"]], ["Sold", iv["sold"]], ["Closing inventory", iv["closing"]]])
+    if inc["checks"]:
+        table("CROSS-CHECKS BETWEEN YOUR FILES", ["Check", "First figure", "Second figure", "Difference", "Result", "Note"],
+              [[c["label"], c["a"], c["b"], c["diff"], "OK" if c["ok"] else "REVIEW", c.get("note", "")] for c in inc["checks"]],
+              bad=lambda rec: rec[4] == "REVIEW")
+    ws.column_dimensions["A"].width = 58
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 44
+    ws.column_dimensions["E"].width = 14
+    ws.freeze_panes = "A5"
+
+    if inc["daily"]:
+        wd = wb.create_sheet(_sheet_name("Daily Sales", used))
+        _header(wd, 1, ["Date", "Net sales"])
+        for i, (d, v) in enumerate(inc["daily"], start=2):
+            _put(wd, i, 1, d)
+            _put(wd, i, 2, v)
+        n = len(inc["daily"]) + 2
+        _put(wd, n, 1, "TOTAL", bold=True, fill=_TOT_FILL)
+        _put(wd, n, 2, sum(v for _, v in inc["daily"]), bold=True, fill=_TOT_FILL)
+        _put(wd, n + 1, 1, "Daily average", bold=True)
+        _put(wd, n + 1, 2, sum(v for _, v in inc["daily"]) / len(inc["daily"]), bold=True)
+        _autowidth(wd)
+    if p["invoices"]:
+        wo = wb.create_sheet(_sheet_name("OCS Purchases", used))
+        _header(wo, 1, ["Invoice", "Date", "Product", "Freight", "HST", "Invoice total"])
+        for i, x in enumerate(p["invoices"], start=2):
+            for j, v in enumerate([x["number"], x["date"], x["subtotal"], x["freight"], x["tax"], x["total"]], 1):
+                _put(wo, i, j, v)
+        n = len(p["invoices"]) + 2
+        _put(wo, n, 1, "TOTAL", bold=True, fill=_TOT_FILL)
+        _put(wo, n, 2, "", fill=_TOT_FILL)
+        for j, k in enumerate(["subtotal", "freight", "tax", "total"], 3):
+            _put(wo, n, j, p[k], bold=True, fill=_TOT_FILL)
+        _autowidth(wo)
 
 
 # ==========================================================================
@@ -720,10 +1200,10 @@ def _donut(parts: list[tuple[str, float]]) -> str:
 
 def build_owner_report_html(store: str, period: str, payload: dict) -> str:
     fin = financials(payload)
+    inc = fin["inc"]
     sales, cogs, gross, exp, noi = fin["sales"], fin["cogs"], fin["gross"], fin["expenses"], fin["noi"]
-    facts = payload.get("doc_facts") or []
-    exp_map = payload.get("expenses") or {}
-    exp_items = sorted([(label, parse_money(exp_map.get(k))) for k, label in EXPENSE_FIELDS], key=lambda t: -t[1])
+    infos = [i for i in (payload.get("docs_info") or []) if i.get("kind") != "attached" or i.get("status") != "attached"]
+    exp_items = sorted([(x["label"], x["amount"]) for x in inc["expense_lines"]], key=lambda t: -t[1])
     exp_items = [t for t in exp_items if t[1] > 0]
     cats = _category_sales(payload)
     missing = missing_docs(payload)
@@ -788,15 +1268,90 @@ def build_owner_report_html(store: str, period: str, payload: dict) -> str:
             f'<b>{_m(v)}</b></div>' for n, v in cats[:10])
 
     # ---- documents read
-    fact_rows = "".join(
-        f"<tr><td>{_e(DOC_NAME.get(f['cat'], f['cat']))}</td><td>{_e(f['file'])}</td><td>{_e(f['col'])}</td>"
-        f"<td class='r'>{_m(f['total'], True)}</td></tr>" for f in facts)
-    facts_html = (f"<table><thead><tr><th>Document</th><th>File</th><th>Line used</th><th class='r'>Total</th></tr></thead>"
-                  f"<tbody>{fact_rows}</tbody></table>") if facts else '<p class="muted">No spreadsheet documents uploaded yet.</p>'
+    def _fmt(l):
+        v = l[1]
+        if isinstance(v, str):
+            return _e(l[0]) + ": " + _e(v)
+        return _e(l[0]) + ": " + (f"{v:,.1f}" if l[0] in ("Days", "Litres") else _m(v, True))
+    seen_ocs = [i for i in infos if i["kind"] == "ocs_invoice"]
+    doc_rows = ""
+    for i in infos:
+        if i["kind"] == "ocs_invoice":
+            continue
+        doc_rows += (f"<tr><td>{_e(DOC_NAME.get(i['cat'], i['cat']))}</td><td>{_e(i['file'])}</td>"
+                     f"<td>{' &middot; '.join(_fmt(l) for l in i['lines'][:5])}</td></tr>")
+    if seen_ocs:
+        p = inc["purchases"]
+        doc_rows += (f"<tr><td>OCS: Invoices</td><td>{len(seen_ocs)} invoice files</td><td>Product + freight: "
+                     f"{_m(p['subtotal'] + p['freight'], True)} &middot; HST: {_m(p['tax'], True)} &middot; Invoice total: {_m(p['total'], True)}</td></tr>")
+    facts_html = (f"<table><thead><tr><th>Document</th><th>File</th><th>What was read</th></tr></thead><tbody>{doc_rows}</tbody></table>"
+                  if doc_rows else '<p class="muted">No documents uploaded yet.</p>')
 
     checklist = "".join(
         f"<li class='{'ok' if label not in missing else 'no'}'>{'✓' if label not in missing else '✗'} {_e(label)}</li>"
         for _, label in CHECKLIST_ITEMS)
+
+    # ---- income statement table
+    rev, cgs = inc["revenue"], inc["cogs"]
+    pc = lambda v: (f"{v / rev['net'] * 100:.1f}%" if rev["net"] else "")
+    def irow(label, v, bold=False, neg=False, note=""):
+        cls = ' class="strong"' if bold else ""
+        shown = _m(-v if neg else v, True)
+        return f"<tr{cls}><td>{_e(label)}</td><td class='r'>{shown}</td><td class='r'>{pc(v)}</td><td class='muted'>{_e(note)}</td></tr>"
+    ir = ""
+    if rev["gross"]:
+        ir += irow("Gross sales", rev["gross"]) + irow("Less: refunds", rev["refunds"], neg=True) + irow("Less: discounts", rev["discounts"], neg=True)
+    ir += irow("Net sales", rev["net"], True, note=rev["src"])
+    ir += irow("Cost of goods sold", cgs["amount"], neg=True, note=cgs["src"])
+    ir += irow("Gross profit", gross, True)
+    for x in inc["expense_lines"]:
+        ir += irow(x["label"], x["amount"], neg=True, note=x["src"] if x["src"] != "Entered by you" else "")
+    ir += irow("Total operating expenses", exp, True, neg=True)
+    ir += irow("Net operating income", noi, True)
+    hst_note = (f'<p class="muted">HST collected from customers: {_m(rev["hst"], True)} (owed to the government, not income).</p>'
+                if rev["hst"] else "")
+    income_html = (f'<table class="inc"><thead><tr><th></th><th class="r">Amount</th><th class="r">% of sales</th><th></th></tr></thead>'
+                   f'<tbody>{ir}</tbody></table>{hst_note}')
+
+    # ---- daily sales chart
+    daily_html = ""
+    dl = inc["daily"]
+    if len(dl) >= 2:
+        mx = max(v for _, v in dl) or 1
+        avg = sum(v for _, v in dl) / len(dl)
+        w, h, pad = 600, 150, 16
+        bw = (w - 2 * pad) / len(dl)
+        bars = "".join(
+            f'<rect x="{pad + i * bw + 1:.1f}" y="{h - 22 - (v / mx) * (h - 40):.1f}" width="{max(bw - 2, 1):.1f}" '
+            f'height="{(v / mx) * (h - 40):.1f}" rx="2" fill="#10b981"><title>{_e(d)}: {_m(v)}</title></rect>' for i, (d, v) in enumerate(dl))
+        ay = h - 22 - (avg / mx) * (h - 40)
+        best = max(dl, key=lambda t: t[1])
+        worst = min(dl, key=lambda t: t[1])
+        daily_html = (f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="Daily net sales">{bars}'
+                      f'<line x1="{pad}" x2="{w - pad}" y1="{ay:.1f}" y2="{ay:.1f}" stroke="#065f46" stroke-dasharray="4 3"/>'
+                      f'<text x="{pad}" y="{h - 6}" font-size="10" fill="#71717a">{_e(dl[0][0][5:])}</text>'
+                      f'<text x="{w - pad}" y="{h - 6}" font-size="10" fill="#71717a" text-anchor="end">{_e(dl[-1][0][5:])}</text></svg>'
+                      f'<p class="muted">Average day {_m(avg)} &middot; best day {_e(best[0][5:])} {_m(best[1])} &middot; slowest day {_e(worst[0][5:])} {_m(worst[1])}</p>')
+
+    # ---- payment mix donut
+    tender_html = ""
+    if inc["tender"]:
+        tparts = sorted(inc["tender"].items(), key=lambda t: -t[1])
+        tl = "".join(f'<li><i style="background:{_DONUT_COLORS[i % len(_DONUT_COLORS)]}"></i>{_e(n)}<b>{_m(v)}</b></li>' for i, (n, v) in enumerate(tparts))
+        tender_html = f'<div class="donut">{_donut(tparts)}<ul>{tl}</ul></div><p class="muted">Includes HST. As recorded by the till.</p>'
+
+    # ---- purchases + cross-checks
+    p_ = inc["purchases"]
+    purchases_html = ""
+    if p_["invoices"]:
+        purchases_html = (f'<table><tbody><tr><td>OCS invoices</td><td class="r"><b>{len(p_["invoices"])}</b></td></tr>'
+                          f'<tr><td>Product</td><td class="r">{_m(p_["subtotal"], True)}</td></tr><tr><td>Freight</td><td class="r">{_m(p_["freight"], True)}</td></tr>'
+                          f'<tr><td>HST (recoverable)</td><td class="r">{_m(p_["tax"], True)}</td></tr><tr><td><b>Invoice total</b></td><td class="r"><b>{_m(p_["total"], True)}</b></td></tr></tbody></table>')
+    checks_html = "".join(
+        f'<li class="{"ok" if c["ok"] else "no"}">{"✓" if c["ok"] else "!"} {_e(c["label"])}<br><span class="muted">{_e(c["a_name"])} {_m(c["a"], True)} vs {_e(c["b_name"])} {_m(c["b"], True)}'
+        f'{"" if c["ok"] else " &middot; difference " + _m(c["diff"], True)}</span>'
+        f'{"<br><span class=muted>" + _e(c["note"]) + "</span>" if c.get("note") else ""}</li>' for c in inc["checks"])
+    checks_html = f'<ul class="chk1">{checks_html}</ul>' if checks_html else ""
 
     def tile(label, value, sub="", tone=""):
         return f'<div class="tile {tone}"><span>{_e(label)}</span><b>{value}</b><em>{sub}</em></div>'
@@ -835,6 +1390,7 @@ table{{width:100%;border-collapse:collapse;font-size:13px}} th,td{{padding:6px 8
 .two{{display:grid;grid-template-columns:1fr 1fr;gap:14px}} @media(max-width:640px){{.two{{grid-template-columns:1fr}} .hb{{grid-template-columns:100px 1fr 80px}}}}
 ul.chk{{list-style:none;margin:0;padding:0;columns:2;font-size:13px}} ul.chk li.ok{{color:var(--em2)}} ul.chk li.no{{color:#b91c1c;font-weight:600}}
 .muted{{color:var(--muted);font-size:13px}} .note{{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:8px 12px;margin-top:10px;font-size:13px}}
+table.inc td,table.inc th{{padding:5px 8px}} table.inc tr.strong td{{font-weight:700;background:#ecfdf5}} ul.chk1{{list-style:none;margin:0;padding:0;font-size:13px}} ul.chk1 li{{padding:5px 0;border-bottom:1px solid var(--line)}} ul.chk1 li.ok{{color:var(--em2)}} ul.chk1 li.no{{color:#b45309}}
 footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
 @media print{{body{{background:#fff}} .page{{padding:0}} .card,.tile{{box-shadow:none}} @page{{size:A4;margin:12mm}}}}
 </style></head><body><div class="page">
@@ -846,6 +1402,10 @@ footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
 <div class="tiles">{tiles}</div>
 
 {f'<div class="card"><h2>Where every sales dollar went</h2>{bar}</div>' if bar else ''}
+
+<div class="card"><h2>Income statement</h2>{income_html}</div>
+
+{f'<div class="card"><h2>Net sales by day</h2>{daily_html}</div>' if daily_html else ''}
 
 <div class="two">
   <div class="card"><h2>Operating expenses</h2>{donut}</div>
@@ -860,9 +1420,13 @@ footer{{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}}
   </div>
 </div>
 
-{f'<div class="card"><h2>Sales by product category</h2>{cat_html}</div>' if cat_html else ''}
+{f'<div class="card"><h2>How customers paid</h2>{tender_html}</div>' if tender_html else ''}
 
-<div class="card"><h2>Figures read from your uploaded documents</h2>{facts_html}</div>
+{f'<div class="two"><div class="card"><h2>Purchases from OCS</h2>{purchases_html}</div><div class="card"><h2>Do the files agree?</h2>{checks_html}</div></div>' if purchases_html or checks_html else ''}
+
+{f'<div class="card"><h2>Cost of goods by product category</h2>{cat_html}</div>' if cat_html else ''}
+
+<div class="card"><h2>What was read from your uploaded documents</h2>{facts_html}</div>
 
 <footer>Prepared {datetime.now():%B %d, %Y} · The OZ Store · Figures come from the files uploaded for this month. To save as PDF, use your browser's Print option.</footer>
 </div></body></html>"""
@@ -1982,16 +2546,28 @@ HTML_CODE = r"""<!DOCTYPE html>
         function renderDocFacts(formatMoney) {
             const box = document.getElementById('doc-facts-box');
             if (!box) return;
-            const items = (docFacts && docFacts.items) ? docFacts.items : [];
-            if (!items.length) {
-                box.innerHTML = '<p class="text-xs text-emerald-200/70">Upload the Greenline, Moneris and OCS reports (Browse buttons in the checklist) and their totals will appear here and feed the figures above.</p>';
+            const docs = (docFacts && docFacts.docs) ? docFacts.docs : [];
+            if (!docs.length) {
+                box.innerHTML = '<p class="text-xs text-emerald-200/70">No documents uploaded for this store and month yet. Use the Browse buttons in the checklist to add the Greenline, Moneris, OCS and gas card reports. Their figures will appear here and feed the numbers above.</p>';
                 return;
             }
+            const val = (l) => (typeof l[1] === 'string') ? esc(l[1]) : ((l[0] === 'Days' || l[0] === 'Litres') ? Number(l[1]).toLocaleString(undefined, {maximumFractionDigits: 1}) : formatMoney(Number(l[1]) || 0));
+            const result = (d) => {
+                if (d.status === 'read' && d.lines && d.lines.length) {
+                    return d.lines.map(l => '<span class="inline-block mr-3"><span class="text-emerald-300">' + esc(l[0]) + ':</span> <span class="font-bold text-white">' + val(l) + '</span></span>').join('');
+                }
+                if (d.status === 'attached') return '<span class="text-amber-300">Attached to the package (a photo, or numbers could not be read from this file).</span>';
+                const cols = (d.cols || []).map(c => esc(c.name) + ' ' + formatMoney(Number(c.total) || 0)).join(' &middot; ');
+                return '<span class="text-amber-300">Read ' + d.rows + ' rows but no sales/total line was recognised.</span><div class="text-[11px] text-emerald-300/70 mt-0.5">Columns: ' + esc((d.headers || []).join(', ')) + (cols ? '<br>Totals: ' + cols : '') + '</div>';
+            };
+            const extra = (docFacts && docFacts.extra) ? docFacts.extra : [];
             box.innerHTML = '<h5 class="text-sm font-bold text-emerald-300 mb-3">Figures read from your uploaded documents</h5>' +
                 '<div class="overflow-x-auto rounded-lg border border-emerald-800"><table class="w-full text-left text-xs text-emerald-100">' +
-                '<thead class="bg-emerald-800/60 text-emerald-300"><tr><th class="p-2">Document</th><th class="p-2">File</th><th class="p-2">Column / line used</th><th class="p-2 text-right">Total</th></tr></thead><tbody>' +
-                items.map(i => '<tr class="border-t border-emerald-800"><td class="p-2 font-medium text-white">' + esc(i.label) + '</td><td class="p-2">' + esc(i.file) + '</td><td class="p-2">' + esc(i.col) + '</td><td class="p-2 text-right font-bold">' + formatMoney(Number(i.total) || 0) + '</td></tr>').join('') +
-                '</tbody></table></div>';
+                '<thead class="bg-emerald-800/60 text-emerald-300"><tr><th class="p-2">Document</th><th class="p-2">File</th><th class="p-2">What was read</th></tr></thead><tbody>' +
+                docs.map(d => '<tr class="border-t border-emerald-800 align-top"><td class="p-2 font-medium text-white">' + esc(d.label) + '</td><td class="p-2">' + esc(d.file) + '</td><td class="p-2">' + result(d) + '</td></tr>').join('') +
+                '</tbody></table></div>' +
+                (extra.length ? '<p class="text-[11px] text-emerald-200/80 mt-2">Also counted as operating expenses from your documents: ' + extra.map(x => esc(x.label) + ' ' + formatMoney(Number(x.total) || 0)).join(' &middot; ') + '.</p>' : '') +
+                '<p class="text-[11px] text-emerald-200/70 mt-2">Sales and cost of goods come from Greenline Financials. Card fees come from the Moneris statements and fuel from the gas card statements. The expense fields below are typed in by you. Press the Owner Report button for the full income statement.</p>';
         }
 
         function updateFinancialSummary() {
@@ -2022,13 +2598,15 @@ HTML_CODE = r"""<!DOCTYPE html>
                     });
                 }
 
-                let salesSrc = totalSales > 0 ? "Inventory sold column" : "";
-                let cogsSrc = totalCogs > 0 ? "Inventory cost column" : "";
-                if (docFacts && docFacts.sales > 0) { totalSales = docFacts.sales; salesSrc = docFacts.sales_src; }
-                if (totalCogs === 0 && docFacts && docFacts.cogs > 0) { totalCogs = docFacts.cogs; cogsSrc = docFacts.cogs_src; }
-                if (totalCogs === 0 && totalSales > 0) {
-                    cogsSrc = "Estimated at 80% of sales";
+                const invSoldTotal = totalSales, invCostTotal = totalCogs;
+                let salesSrc = invSoldTotal > 0 ? "Inventory sold column" : "";
+                let cogsSrc = invCostTotal > 0 ? "Inventory cost column" : "";
+                if (docFacts && docFacts.sales > 0) {
+                    totalSales = docFacts.sales; salesSrc = docFacts.sales_src;
+                    if (docFacts.cogs > 0) { totalCogs = docFacts.cogs; cogsSrc = docFacts.cogs_src; }
+                    else if (invCostTotal === 0 && invSoldTotal > 0) { totalCogs = invSoldTotal; cogsSrc = 'Inventory sold, valued at cost'; }
                 }
+                if (totalCogs === 0 && totalSales > 0) { cogsSrc = "Estimated at 80% of sales"; }
                 if (totalCogs === 0 && totalSales > 0) {
                     totalCogs = totalSales * 0.80;
                 }
@@ -2050,7 +2628,8 @@ HTML_CODE = r"""<!DOCTYPE html>
                 const expSec = parseNum('exp-security');
                 const expLic = parseNum('exp-licenses');
 
-                const totalExp = expRent + expSal + expUtil + expAdv + expMkt + expData + expIns + expGar + expSec + expLic;
+                const extraExp = (docFacts && docFacts.extra ? docFacts.extra : []).reduce((a, x) => a + (Number(x.total) || 0), 0);
+                const totalExp = expRent + expSal + expUtil + expAdv + expMkt + expData + expIns + expGar + expSec + expLic + extraExp;
 
                 const grossProfit = totalSales - totalCogs;
                 const grossMargin = totalSales > 0 ? (grossProfit / totalSales) * 100 : 0;
@@ -2565,36 +3144,72 @@ def parse_table(data: bytes, name: str):
         return None
 
 
+@st.cache_data(show_spinner=False, max_entries=64)
+def analyze_cached(cat: str, name: str, data: bytes):
+    return analyze_doc(cat, name, data, parse_table(data, name))
+
+
 def compute_facts(docs: list):
-    """Parse every uploaded CSV/Excel and read the key total out of it."""
-    tables, facts = {}, []
+    """Read every uploaded file. -> (sheet tables, generic table totals, one info dict per file)."""
+    tables, facts, infos = {}, [], []
     for d in docs:
         if d.get("auto"):
             continue
-        df = parse_table(d["data"], d["name"])
-        if df is None or df.empty:
-            continue
-        tables[d["key"]] = (d["label"], df)
         cat = d["key"].split(":")[0]
-        got = extract_total(cat, df)
-        if got:
-            facts.append({"cat": cat, "file": d["name"], **got})
-    return tables, facts
+        info = dict(analyze_cached(cat, d["name"], d["data"]))
+        info["key"], info["label"] = d["key"], d["label"]
+        infos.append(info)
+        if info["kind"] != "ocs_invoice":
+            df = parse_table(d["data"], d["name"])
+            if df is not None and not df.empty:
+                tables[d["key"]] = (d["label"], df)
+        if info["kind"] == "table_total":
+            facts.append({"cat": cat, "file": d["name"], **info["got"]})
+    return tables, facts, infos
+
+
+def describe_docs(infos: list) -> list:
+    """One line per uploaded file for the page (OCS invoices are folded into one line)."""
+    out, ocs = [], [i for i in infos if i["kind"] == "ocs_invoice"]
+    for i in infos:
+        if i["kind"] == "ocs_invoice":
+            continue
+        out.append({"label": i["label"], "file": i["file"], "status": i["status"], "lines": i["lines"],
+                    "rows": i.get("rows", 0), "headers": i.get("headers", []), "cols": i.get("cols", [])})
+    if ocs:
+        sub = sum(i["inv"]["subtotal"] + i["inv"]["freight"] for i in ocs)
+        out.append({"label": "OCS: Invoices", "file": f"{len(ocs)} invoice files", "status": "read", "rows": 0, "headers": [], "cols": [],
+                    "lines": [["Product + freight", sub], ["HST", sum(i["inv"]["tax"] for i in ocs)],
+                              ["Invoice total", sum(i["inv"]["total"] for i in ocs)]]})
+    return out
+
+
+def _brief(info: dict) -> str:
+    parts = []
+    for l in info["lines"][:4]:
+        v = l[1]
+        parts.append(f"{l[0]}: {v}" if isinstance(v, str) else f"{l[0]}: {v:,.2f}")
+    return "Read - " + "; ".join(parts)
 
 
 def package_entries(store: str, period: str, payload: dict):
     docs, unreadable = gather_documents(payload)
-    _t, facts = compute_facts(docs)
-    payload["doc_facts"] = facts
-    tables, doc_log = {}, []
+    tables, facts, infos = compute_facts(docs)
+    payload["doc_facts"], payload["docs_info"] = facts, infos
+    by_key = {i["key"]: i for i in infos}
+    doc_log = []
     for d in docs:
-        df = None if d.get("auto") else parse_table(d["data"], d["name"])
         kb = round(len(d["data"]) / 1024, 1)
-        if df is not None and not df.empty:
-            tables[d["key"]] = (d["label"], df)
-            doc_log.append([d["label"], d["name"], kb, f"Own sheet ({len(df)} rows)"])
+        info = by_key.get(d["key"])
+        if d.get("auto"):
+            note = "Auto-filed formatted inventory (see Inventory sheet)"
+        elif info and info["status"] == "read" and d["key"] not in tables:
+            note = _brief(info) + " (see Income Statement)"
+        elif d["key"] in tables:
+            note = f"Own sheet ({len(tables[d['key']][1])} rows)" + ("; " + _brief(info) if info and info["status"] == "read" else "")
         else:
-            doc_log.append([d["label"], d["name"], kb, "Auto-filed formatted inventory (see Inventory sheet)" if d.get("auto") else "Attached only (PDF, image or empty)"])
+            note = "Attached only (photo, or numbers could not be read)"
+        doc_log.append([d["label"], d["name"], kb, note])
     for label, name in unreadable:
         doc_log.append([label, name, "", "NOT FOUND in storage - please upload again"])
     xlsx = build_store_workbook(store, period, payload, tables, doc_log)
@@ -2630,7 +3245,7 @@ def build_owner_report(store: str, month: str, year: str):
         return None
     payload = rec_to_engine(rec)
     docs, _bad = gather_documents(payload)
-    _t, payload["doc_facts"] = compute_facts(docs)
+    _t, payload["doc_facts"], payload["docs_info"] = compute_facts(docs)
     return build_owner_report_html(store, f"{month} {year}", payload)
 
 
@@ -3095,14 +3710,20 @@ def build_html_page() -> str:
                                  for f in lst] for cat, lst in (cj.get("files") or {}).items() if lst}
         store_data_json[spk] = rec
 
-    page_facts = {"sales": 0, "sales_src": "", "cogs": 0, "cogs_src": "", "items": []}
+    page_facts = {"sales": 0, "sales_src": "", "cogs": 0, "cogs_src": "", "extra": [], "docs": []}
     if rec:
         try:
-            docs, _bad = gather_documents(rec_to_engine(rec))
-            _t, facts = compute_facts(docs)
-            page_facts = {**summarize_facts(facts), "items": [
-                {"label": DOC_LABELS.get(f["cat"], f["cat"]), "file": f["file"], "col": f["col"],
-                 "rows": f["rows"], "total": f["total"]} for f in facts]}
+            payload = rec_to_engine(rec)
+            docs, _bad = gather_documents(payload)
+            _t, payload["doc_facts"], payload["docs_info"] = compute_facts(docs)
+            inc = build_income(payload)
+            from_greenline = inc["cogs"]["src"].startswith("Greenline")
+            page_facts = {
+                "sales": inc["revenue"]["net"] if inc["revenue"]["from_docs"] else 0, "sales_src": inc["revenue"]["src"],
+                "cogs": inc["cogs"]["amount"] if from_greenline else 0, "cogs_src": inc["cogs"]["src"],
+                "extra": [{"label": x["label"], "total": x["amount"]} for x in inc["extra_expenses"]],
+                "docs": describe_docs(payload["docs_info"]),
+            }
         except Exception:
             log.exception("Could not read totals from the uploaded documents")
 
@@ -3162,3 +3783,22 @@ if st.session_state.pop("panel_open", False):
 if st.session_state.get("panel_visible"):
     render_panel()
 components.html(build_html_page(), height=3000, scrolling=True)
+
+# ----------------------------------------------------------------------------
+# Owner report: always shown at the bottom of the app (simple, readable, printable)
+# ----------------------------------------------------------------------------
+_AUTOSIZE = ("<script>function f(){try{window.frameElement.style.height=(document.documentElement.scrollHeight+24)+'px'}catch(e){}}"
+             "window.addEventListener('load',f);setTimeout(f,400);setTimeout(f,1500);</script>")
+try:
+    if get_record(spk):
+        _owner_html = build_owner_report(ctx["store"], ctx["month"], ctx["year"])
+        if _owner_html:
+            st.markdown(
+                f"<div style='margin:1.5rem 0 0.25rem 0'><h3 style='margin:0;color:#065f46'>📄 Owner Report — {htmllib.escape(ctx['store'])} · "
+                f"{htmllib.escape(ctx['month'])} {htmllib.escape(ctx['year'])}</h3>"
+                "<p style='margin:2px 0 0 0;color:#71717a;font-size:13px'>A plain-English summary of the month. It updates when you press "
+                "Save All to Cloud or upload a document. To keep a copy, use your browser's Print and choose Save as PDF.</p></div>",
+                unsafe_allow_html=True)
+            components.html(_owner_html.replace("</body>", _AUTOSIZE + "</body>"), height=2600, scrolling=False)
+except Exception:
+    log.exception("Could not build the owner report")
